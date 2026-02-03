@@ -1,0 +1,3318 @@
+package service
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/brandon-fryslie/cc-viz/internal/config"
+	"github.com/brandon-fryslie/cc-viz/internal/model"
+)
+
+type SQLiteStorageService struct {
+	db     *sql.DB
+	config *config.StorageConfig
+}
+
+func NewSQLiteStorageService(cfg *config.StorageConfig) (StorageService, error) {
+	// Add SQLite-specific connection parameters for better concurrency
+	dbPath := cfg.DBPath + "?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL"
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	service := &SQLiteStorageService{
+		db:     db,
+		config: cfg,
+	}
+
+	if err := service.createTables(); err != nil {
+		return nil, fmt.Errorf("failed to create tables: %w", err)
+	}
+
+	return service, nil
+}
+
+func (s *SQLiteStorageService) createTables() error {
+	// Check if table exists
+	var tableExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='requests'").Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if table exists: %w", err)
+	}
+
+	if tableExists == 0 {
+		// Fresh database - create table with all columns including new ones
+		schema := `
+		CREATE TABLE requests (
+			id TEXT PRIMARY KEY,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			method TEXT NOT NULL,
+			endpoint TEXT NOT NULL,
+			headers TEXT NOT NULL,
+			body TEXT NOT NULL,
+			user_agent TEXT,
+			content_type TEXT,
+			prompt_grade TEXT,
+			response TEXT,
+			model TEXT,
+			original_model TEXT,
+			routed_model TEXT,
+			provider TEXT,
+			subagent_name TEXT,
+			tools_used TEXT,
+			tool_call_count INTEGER DEFAULT 0,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			cache_creation_tokens INTEGER DEFAULT 0,
+			response_time_ms INTEGER DEFAULT 0,
+			first_byte_time_ms INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE INDEX idx_timestamp ON requests(timestamp DESC);
+		CREATE INDEX idx_endpoint ON requests(endpoint);
+		CREATE INDEX idx_model ON requests(model);
+		CREATE INDEX idx_provider ON requests(provider);
+		CREATE INDEX idx_subagent ON requests(subagent_name);
+		CREATE INDEX idx_timestamp_provider ON requests(timestamp DESC, provider);
+		`
+		_, err := s.db.Exec(schema)
+		if err != nil {
+			return fmt.Errorf("failed to create table: %w", err)
+		}
+	} else {
+		// Existing database - run migrations to add new columns
+		if err := s.runMigrations(); err != nil {
+			return err
+		}
+	}
+	// ALWAYS run conversation search migrations (for both fresh and existing databases)
+	if err := s.runConversationSearchMigrations(); err != nil {
+		return err
+	}
+
+	// ALWAYS run Claude session data migrations (todos, plans)
+	if err := s.runClaudeSessionDataMigrations(); err != nil {
+		return err
+	}
+
+	// ALWAYS run extensions migrations
+	if err := s.runExtensionMigrations(); err != nil {
+		return err
+	}
+
+	// ALWAYS run subagent graph migrations
+	if err := s.runSubagentGraphMigrations(); err != nil {
+		return err
+	}
+
+	// ALWAYS run sessions migrations
+	if err := s.runSessionsMigrations(); err != nil {
+		return fmt.Errorf("sessions migrations failed: %w", err)
+	}
+
+
+	// ALWAYS run relationship maps migrations
+	if err := s.runRelationshipMapsMigrations(); err != nil {
+		return fmt.Errorf("relationship maps migrations failed: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStorageService) runMigrations() error {
+	// Add new columns if they don't exist (for existing databases)
+	migrations := []string{
+		"ALTER TABLE requests ADD COLUMN provider TEXT",
+		"ALTER TABLE requests ADD COLUMN subagent_name TEXT",
+		"ALTER TABLE requests ADD COLUMN tools_used TEXT",
+		"ALTER TABLE requests ADD COLUMN tool_call_count INTEGER DEFAULT 0",
+		"ALTER TABLE requests ADD COLUMN input_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE requests ADD COLUMN output_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE requests ADD COLUMN cache_read_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE requests ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0",
+		"ALTER TABLE requests ADD COLUMN response_time_ms INTEGER DEFAULT 0",
+		"ALTER TABLE requests ADD COLUMN first_byte_time_ms INTEGER DEFAULT 0",
+	}
+
+	for _, migration := range migrations {
+		// Ignore errors - column may already exist
+		s.db.Exec(migration)
+	}
+
+	// Create new indexes (ignore errors if they exist)
+	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_provider ON requests(provider)")
+	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_subagent ON requests(subagent_name)")
+	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_timestamp_provider ON requests(timestamp DESC, provider)")
+
+
+	return nil
+}
+
+// runConversationSearchMigrations creates the conversation search tables and FTS5 index
+func (s *SQLiteStorageService) runConversationSearchMigrations() error {
+	// Check if conversations table already exists
+	var conversationsExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversations'").Scan(&conversationsExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if conversations table exists: %w", err)
+	}
+
+	if conversationsExists == 0 {
+		// Create conversations metadata table
+		conversationsSchema := `
+		CREATE TABLE conversations (
+			id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			project_name TEXT NOT NULL,
+			start_time DATETIME,
+			end_time DATETIME,
+			message_count INTEGER DEFAULT 0,
+			file_path TEXT NOT NULL UNIQUE,
+			file_mtime DATETIME,
+			indexed_at DATETIME
+		);
+
+		CREATE INDEX idx_conversations_project ON conversations(project_path);
+		CREATE INDEX idx_conversations_mtime ON conversations(file_mtime DESC);
+		CREATE INDEX idx_conversations_indexed ON conversations(indexed_at DESC);
+		`
+
+		if _, err := s.db.Exec(conversationsSchema); err != nil {
+			return fmt.Errorf("failed to create conversations table: %w", err)
+		}
+
+		log.Println("✅ Created conversations table")
+	}
+
+	// Create FTS5 table using build-tag conditional function
+	if err := createFTS5Table(s.db); err != nil {
+		return err
+	}
+
+	// Check if conversation_messages table exists
+	var messagesExists int
+	err = s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_messages'").Scan(&messagesExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if conversation_messages table exists: %w", err)
+	}
+
+	if messagesExists == 0 {
+		// Create conversation_messages table to store full message data
+		messagesSchema := `
+		CREATE TABLE conversation_messages (
+			uuid TEXT PRIMARY KEY,
+			conversation_id TEXT NOT NULL,
+			parent_uuid TEXT,
+			type TEXT NOT NULL,
+			role TEXT,
+			timestamp DATETIME NOT NULL,
+			cwd TEXT,
+			git_branch TEXT,
+			session_id TEXT,
+			agent_id TEXT,
+			is_sidechain BOOLEAN DEFAULT FALSE,
+			request_id TEXT,
+			model TEXT,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			cache_creation_tokens INTEGER DEFAULT 0,
+			content_json TEXT,
+			tool_use_json TEXT,
+			tool_result_json TEXT,
+			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX idx_messages_conversation ON conversation_messages(conversation_id);
+		CREATE INDEX idx_messages_timestamp ON conversation_messages(timestamp);
+		CREATE INDEX idx_messages_parent ON conversation_messages(parent_uuid);
+		CREATE INDEX idx_messages_session ON conversation_messages(session_id);
+		CREATE INDEX idx_messages_agent ON conversation_messages(agent_id);
+		CREATE INDEX idx_messages_request ON conversation_messages(request_id);
+		`
+
+		if _, err := s.db.Exec(messagesSchema); err != nil {
+			return fmt.Errorf("failed to create conversation_messages table: %w", err)
+		}
+
+		log.Println("✅ Created conversation_messages table")
+	}
+
+	return nil
+}
+
+// runClaudeSessionDataMigrations creates tables for todos and plans
+func (s *SQLiteStorageService) runClaudeSessionDataMigrations() error {
+	// Check if claude_todos table exists
+	var todosExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='claude_todos'").Scan(&todosExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if claude_todos table exists: %w", err)
+	}
+
+	if todosExists == 0 {
+		// Create claude_todos table
+		todosSchema := `
+		CREATE TABLE claude_todos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_uuid TEXT NOT NULL,
+			agent_uuid TEXT,
+			file_path TEXT NOT NULL,
+			content TEXT NOT NULL,
+			status TEXT NOT NULL,
+			active_form TEXT,
+			item_index INTEGER NOT NULL,
+			modified_at DATETIME NOT NULL,
+			indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(file_path, item_index)
+		);
+
+		CREATE INDEX idx_todos_session ON claude_todos(session_uuid);
+		CREATE INDEX idx_todos_status ON claude_todos(status);
+		CREATE INDEX idx_todos_modified ON claude_todos(modified_at);
+		`
+
+		if _, err := s.db.Exec(todosSchema); err != nil {
+			return fmt.Errorf("failed to create claude_todos table: %w", err)
+		}
+
+		log.Println("✅ Created claude_todos table")
+	}
+
+	// Check if claude_todo_sessions table exists
+	var todoSessionsExists int
+	err = s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='claude_todo_sessions'").Scan(&todoSessionsExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if claude_todo_sessions table exists: %w", err)
+	}
+
+	if todoSessionsExists == 0 {
+		// Create claude_todo_sessions table
+		todoSessionsSchema := `
+		CREATE TABLE claude_todo_sessions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_uuid TEXT NOT NULL,
+			agent_uuid TEXT,
+			file_path TEXT UNIQUE NOT NULL,
+			file_size INTEGER NOT NULL,
+			todo_count INTEGER NOT NULL,
+			pending_count INTEGER NOT NULL,
+			in_progress_count INTEGER NOT NULL,
+			completed_count INTEGER NOT NULL,
+			modified_at DATETIME NOT NULL,
+			indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		`
+
+		if _, err := s.db.Exec(todoSessionsSchema); err != nil {
+			return fmt.Errorf("failed to create claude_todo_sessions table: %w", err)
+		}
+
+		log.Println("✅ Created claude_todo_sessions table")
+	}
+
+	// Check if claude_plans table exists
+	var plansExists int
+	err = s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='claude_plans'").Scan(&plansExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if claude_plans table exists: %w", err)
+	}
+
+	if plansExists == 0 {
+		// Create claude_plans table
+		plansSchema := `
+		CREATE TABLE claude_plans (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_name TEXT UNIQUE NOT NULL,
+			display_name TEXT NOT NULL,
+			content TEXT NOT NULL,
+			preview TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			modified_at DATETIME NOT NULL,
+			indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE INDEX idx_plans_modified ON claude_plans(modified_at);
+		`
+
+		if _, err := s.db.Exec(plansSchema); err != nil {
+			return fmt.Errorf("failed to create claude_plans table: %w", err)
+		}
+
+		log.Println("✅ Created claude_plans table")
+	}
+
+	return nil
+}
+
+// runExtensionMigrations creates tables for extensions
+func (s *SQLiteStorageService) runExtensionMigrations() error {
+	// Check if extensions table exists
+	var extensionsExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='extensions'").Scan(&extensionsExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if extensions table exists: %w", err)
+	}
+
+	if extensionsExists == 0 {
+		// Create fresh extensions table with all new columns
+		extensionsSchema := `
+		CREATE TABLE extensions (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT,
+			enabled BOOLEAN DEFAULT FALSE,
+			source TEXT NOT NULL DEFAULT 'user',
+			plugin_id TEXT,
+			marketplace_id TEXT,
+			file_path TEXT NOT NULL DEFAULT '',
+			project_path TEXT,
+			metadata_json TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE INDEX idx_extensions_type ON extensions(type);
+		CREATE INDEX idx_extensions_enabled ON extensions(enabled);
+		CREATE INDEX idx_extensions_source ON extensions(source);
+		`
+
+		if _, err := s.db.Exec(extensionsSchema); err != nil {
+			return fmt.Errorf("failed to create extensions table: %w", err)
+		}
+
+		log.Println("✅ Created extensions table with source tracking")
+	} else {
+		// Existing table - run migrations to add new columns
+		migrations := []string{
+			"ALTER TABLE extensions ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
+			"ALTER TABLE extensions ADD COLUMN plugin_id TEXT",
+			"ALTER TABLE extensions ADD COLUMN marketplace_id TEXT",
+			"ALTER TABLE extensions ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE extensions ADD COLUMN project_path TEXT",
+		}
+
+		for _, migration := range migrations {
+			// Ignore errors - column may already exist
+			s.db.Exec(migration)
+		}
+
+		// Create new index (ignore errors if it exists)
+		s.db.Exec("CREATE INDEX IF NOT EXISTS idx_extensions_source ON extensions(source)")
+
+		// Set source='user' for any existing rows without a source
+		s.db.Exec("UPDATE extensions SET source='user' WHERE source IS NULL OR source = ''")
+
+		log.Println("✅ Updated extensions table with source tracking columns")
+	}
+
+	return nil
+}
+
+// runSubagentGraphMigrations creates tables for subagent hierarchy tracking
+func (s *SQLiteStorageService) runSubagentGraphMigrations() error {
+	var tableExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='subagent_graph'").Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if subagent_graph table exists: %w", err)
+	}
+
+	if tableExists == 0 {
+		schema := `
+		CREATE TABLE subagent_graph (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			parent_agent_id TEXT,
+			agent_id TEXT NOT NULL,
+			first_message_uuid TEXT,
+			last_message_uuid TEXT,
+			message_count INTEGER DEFAULT 0,
+			spawn_time DATETIME,
+			end_time DATETIME,
+			status TEXT DEFAULT 'unknown',
+			is_sidechain BOOLEAN DEFAULT FALSE,
+			file_path TEXT NOT NULL,
+			file_mtime DATETIME,
+			indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+			UNIQUE(session_id, agent_id)
+		);
+
+		CREATE INDEX idx_subagent_session ON subagent_graph(session_id);
+		CREATE INDEX idx_subagent_parent ON subagent_graph(parent_agent_id, agent_id);
+		CREATE INDEX idx_subagent_spawn ON subagent_graph(spawn_time DESC);
+		CREATE INDEX idx_subagent_file ON subagent_graph(file_path);
+		`
+
+		if _, err := s.db.Exec(schema); err != nil {
+			return fmt.Errorf("failed to create subagent_graph table: %w", err)
+		}
+
+		log.Println("✅ Created subagent_graph table")
+	} else {
+		// Table exists - check for self-referencing records (old bug)
+		var selfRefCount int
+		err := s.db.QueryRow("SELECT COUNT(*) FROM subagent_graph WHERE parent_agent_id = agent_id AND parent_agent_id IS NOT NULL").Scan(&selfRefCount)
+		if err != nil {
+			log.Printf("⚠️ Failed to check for self-referencing records: %v", err)
+		} else if selfRefCount > 0 {
+			log.Printf("⚠️ Found %d self-referencing records in subagent_graph (bug from previous implementation)", selfRefCount)
+			log.Println("🔄 Clearing all subagent_graph records to force re-index with correct parent relationships...")
+			
+			result, err := s.db.Exec("DELETE FROM subagent_graph")
+			if err != nil {
+				log.Printf("❌ Failed to clear subagent_graph: %v", err)
+			} else {
+				rowsDeleted, _ := result.RowsAffected()
+				log.Printf("✅ Cleared %d records from subagent_graph - will re-index on next startup", rowsDeleted)
+			}
+		}
+	}
+
+	return nil
+}
+
+// runSessionsMigrations creates the sessions table and migrates data from conversation_messages
+func (s *SQLiteStorageService) runSessionsMigrations() error {
+	// Check if sessions table exists
+	var tableExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'").Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if sessions table exists: %w", err)
+	}
+
+	if tableExists == 0 {
+		// Create sessions table
+		sessionsSchema := `
+		CREATE TABLE sessions (
+			id TEXT PRIMARY KEY,
+			project_path TEXT,
+			started_at DATETIME,
+			ended_at DATETIME,
+			conversation_count INTEGER DEFAULT 0,
+			message_count INTEGER DEFAULT 0,
+			agent_count INTEGER DEFAULT 0,
+			todo_count INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE INDEX idx_sessions_project ON sessions(project_path);
+		CREATE INDEX idx_sessions_started ON sessions(started_at);
+		`
+
+		if _, err := s.db.Exec(sessionsSchema); err != nil {
+			return fmt.Errorf("failed to create sessions table: %w", err)
+		}
+
+		log.Println("✅ Created sessions table")
+
+		// Populate sessions from existing conversation_messages data
+		migrationQuery := `
+		INSERT OR IGNORE INTO sessions (id, project_path, started_at, ended_at, message_count)
+		SELECT
+			cm.session_id,
+			c.project_path,
+			MIN(cm.timestamp),
+			MAX(cm.timestamp),
+			COUNT(*)
+		FROM conversation_messages cm
+		JOIN conversations c ON cm.conversation_id = c.id
+		WHERE cm.session_id IS NOT NULL AND cm.session_id != ''
+		GROUP BY cm.session_id
+		`
+
+		result, err := s.db.Exec(migrationQuery)
+		if err != nil {
+			return fmt.Errorf("failed to migrate sessions data: %w", err)
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		log.Printf("✅ Migrated %d sessions from conversation_messages", rowsAffected)
+	}
+
+	return nil
+}
+
+// runRelationshipMapsMigrations creates tables for session-conversation and session-file relationships
+func (s *SQLiteStorageService) runRelationshipMapsMigrations() error {
+	// Check if session_conversation_map table exists
+	var scmExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_conversation_map'").Scan(&scmExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if session_conversation_map table exists: %w", err)
+	}
+
+	if scmExists == 0 {
+		// Create session_conversation_map table
+		scmSchema := `
+		CREATE TABLE session_conversation_map (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			first_message_uuid TEXT,
+			last_message_uuid TEXT,
+			message_count INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(session_id, conversation_id),
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX idx_scm_session ON session_conversation_map(session_id);
+		CREATE INDEX idx_scm_conversation ON session_conversation_map(conversation_id);
+		`
+
+		if _, err := s.db.Exec(scmSchema); err != nil {
+			return fmt.Errorf("failed to create session_conversation_map table: %w", err)
+		}
+
+		log.Println("✅ Created session_conversation_map table")
+
+		// Populate session_conversation_map from existing conversation_messages
+		populateQuery := `
+		INSERT OR IGNORE INTO session_conversation_map
+			(session_id, conversation_id, first_message_uuid, last_message_uuid, message_count)
+		SELECT
+			session_id,
+			conversation_id,
+			MIN(uuid),
+			MAX(uuid),
+			COUNT(*)
+		FROM conversation_messages
+		WHERE session_id IS NOT NULL AND session_id != ''
+		GROUP BY session_id, conversation_id
+		`
+
+		result, err := s.db.Exec(populateQuery)
+		if err != nil {
+			return fmt.Errorf("failed to populate session_conversation_map: %w", err)
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		log.Printf("✅ Populated session_conversation_map with %d relationships", rowsAffected)
+	}
+
+	// Check if session_file_changes table exists
+	var sfcExists int
+	err = s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_file_changes'").Scan(&sfcExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if session_file_changes table exists: %w", err)
+	}
+
+	if sfcExists == 0 {
+		// Create session_file_changes table
+		sfcSchema := `
+		CREATE TABLE session_file_changes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			file_path TEXT NOT NULL,
+			change_type TEXT,
+			tool_name TEXT,
+			message_uuid TEXT,
+			timestamp DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX idx_sfc_session ON session_file_changes(session_id);
+		CREATE INDEX idx_sfc_path ON session_file_changes(file_path);
+		CREATE INDEX idx_sfc_timestamp ON session_file_changes(timestamp DESC);
+		`
+
+		if _, err := s.db.Exec(sfcSchema); err != nil {
+			return fmt.Errorf("failed to create session_file_changes table: %w", err)
+		}
+
+		log.Println("✅ Created session_file_changes table")
+	}
+
+	return nil
+}
+
+
+// extractRequestTextForFTS extracts text from a request for full-text indexing
+func extractRequestTextForFTS(request *model.RequestLog) (toolNames, responseText, requestBodyText string) {
+	// Extract tool names
+	if len(request.ToolsUsed) > 0 {
+		toolNames = strings.Join(request.ToolsUsed, ", ")
+	}
+
+	// Extract response text (body preview, first 1000 chars)
+	if request.Response != nil {
+		if request.Response.BodyText != "" {
+			// Use BodyText if available
+			if len(request.Response.BodyText) > 1000 {
+				responseText = request.Response.BodyText[:1000]
+			} else {
+				responseText = request.Response.BodyText
+			}
+		} else if len(request.Response.Body) > 0 {
+			// Try to use raw body
+			bodyStr := string(request.Response.Body)
+			if len(bodyStr) > 1000 {
+				responseText = bodyStr[:1000]
+			} else {
+				responseText = bodyStr
+			}
+		}
+	}
+
+	// Extract request body text (if available, first 1000 chars)
+	if request.Body != nil {
+		bodyJSON, err := json.Marshal(request.Body)
+		if err == nil {
+			bodyStr := string(bodyJSON)
+			if len(bodyStr) > 1000 {
+				requestBodyText = bodyStr[:1000]
+			} else {
+				requestBodyText = bodyStr
+			}
+		}
+	}
+
+	return
+}
+
+func (s *SQLiteStorageService) SaveRequest(request *model.RequestLog) (string, error) {
+	headersJSON, err := json.Marshal(request.Headers)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal headers: %w", err)
+	}
+
+	bodyJSON, err := json.Marshal(request.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal body: %w", err)
+	}
+
+	toolsUsedJSON, err := json.Marshal(request.ToolsUsed)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal tools_used: %w", err)
+	}
+
+	query := `
+		INSERT INTO requests (id, timestamp, method, endpoint, headers, body, user_agent, content_type, model, original_model, routed_model, provider, subagent_name, tools_used, tool_call_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	_, err = s.db.Exec(query,
+		request.RequestID,
+		request.Timestamp,
+		request.Method,
+		request.Endpoint,
+		string(headersJSON),
+		string(bodyJSON),
+		request.UserAgent,
+		request.ContentType,
+		request.Model,
+		request.OriginalModel,
+		request.RoutedModel,
+		request.Provider,
+		request.SubagentName,
+		string(toolsUsedJSON),
+		request.ToolCallCount,
+	)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to insert request: %w", err)
+	}
+
+	// Index request in FTS5 for full-text search
+	if fts5Enabled() {
+		toolNames, responseText, requestBodyText := extractRequestTextForFTS(request)
+		if err := s.indexRequestFTS(
+			request.RequestID,
+			request.Timestamp,
+			request.Method,
+			request.Endpoint,
+			request.Model,
+			request.Provider,
+			toolNames,
+			responseText,
+			requestBodyText,
+		); err != nil {
+			// Log error but don't fail the request save
+			log.Printf("⚠️ Warning: failed to index request %s in FTS: %v", request.RequestID, err)
+		}
+	}
+
+	return request.RequestID, nil
+}
+
+func (s *SQLiteStorageService) GetRequests(page, limit int) ([]model.RequestLog, int, error) {
+	// Get total count
+	var total int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM requests").Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Get paginated results
+	offset := (page - 1) * limit
+	query := `
+		SELECT id, timestamp, method, endpoint, headers, body, model, user_agent, content_type, prompt_grade, response, original_model, routed_model
+		FROM requests
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := s.db.Query(query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query requests: %w", err)
+	}
+	defer rows.Close()
+
+	var requests []model.RequestLog
+	for rows.Next() {
+		var req model.RequestLog
+		var headersJSON, bodyJSON string
+		var promptGradeJSON, responseJSON sql.NullString
+
+		err := rows.Scan(
+			&req.RequestID,
+			&req.Timestamp,
+			&req.Method,
+			&req.Endpoint,
+			&headersJSON,
+			&bodyJSON,
+			&req.Model,
+			&req.UserAgent,
+			&req.ContentType,
+			&promptGradeJSON,
+			&responseJSON,
+			&req.OriginalModel,
+			&req.RoutedModel,
+		)
+		if err != nil {
+			// Error scanning row - skip
+			continue
+		}
+
+		// Unmarshal JSON fields
+		if err := json.Unmarshal([]byte(headersJSON), &req.Headers); err != nil {
+			// Error unmarshaling headers
+			continue
+		}
+
+		var body interface{}
+		if err := json.Unmarshal([]byte(bodyJSON), &body); err != nil {
+			// Error unmarshaling body
+			continue
+		}
+		req.Body = body
+
+		if promptGradeJSON.Valid {
+			var grade model.PromptGrade
+			if err := json.Unmarshal([]byte(promptGradeJSON.String), &grade); err == nil {
+				req.PromptGrade = &grade
+			}
+		}
+
+		if responseJSON.Valid {
+			var resp model.ResponseLog
+			if err := json.Unmarshal([]byte(responseJSON.String), &resp); err == nil {
+				req.Response = &resp
+			}
+		}
+
+		requests = append(requests, req)
+	}
+
+	return requests, total, nil
+}
+
+func (s *SQLiteStorageService) ClearRequests() (int, error) {
+	result, err := s.db.Exec("DELETE FROM requests")
+	if err != nil {
+		return 0, fmt.Errorf("failed to clear requests: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return int(rowsAffected), nil
+}
+
+func (s *SQLiteStorageService) UpdateRequestWithGrading(requestID string, grade *model.PromptGrade) error {
+	gradeJSON, err := json.Marshal(grade)
+	if err != nil {
+		return fmt.Errorf("failed to marshal grade: %w", err)
+	}
+
+	query := "UPDATE requests SET prompt_grade = ? WHERE id = ?"
+	_, err = s.db.Exec(query, string(gradeJSON), requestID)
+	if err != nil {
+		return fmt.Errorf("failed to update request with grading: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStorageService) UpdateRequestWithResponse(request *model.RequestLog) error {
+	responseJSON, err := json.Marshal(request.Response)
+	if err != nil {
+		return fmt.Errorf("failed to marshal response: %w", err)
+	}
+
+	// Extract token counts and timing from response for indexed columns
+	var inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens int
+	var responseTimeMs, firstByteTimeMs int64
+	var toolCallCount int
+
+	if request.Response != nil {
+		responseTimeMs = request.Response.ResponseTime
+		firstByteTimeMs = request.Response.FirstByteTime
+		toolCallCount = request.Response.ToolCallCount
+
+		// Extract usage from response body
+		if request.Response.Body != nil {
+			var respBody struct {
+				Usage *model.AnthropicUsage `json:"usage"`
+			}
+			if err := json.Unmarshal(request.Response.Body, &respBody); err == nil && respBody.Usage != nil {
+				inputTokens = respBody.Usage.InputTokens
+				outputTokens = respBody.Usage.OutputTokens
+				cacheReadTokens = respBody.Usage.CacheReadInputTokens
+				cacheCreationTokens = respBody.Usage.CacheCreationInputTokens
+			}
+		}
+	}
+
+	query := `UPDATE requests SET
+		response = ?,
+		input_tokens = ?,
+		output_tokens = ?,
+		cache_read_tokens = ?,
+		cache_creation_tokens = ?,
+		response_time_ms = ?,
+		first_byte_time_ms = ?,
+		tool_call_count = ?
+		WHERE id = ?`
+
+	_, err = s.db.Exec(query,
+		string(responseJSON),
+		inputTokens,
+		outputTokens,
+		cacheReadTokens,
+		cacheCreationTokens,
+		responseTimeMs,
+		firstByteTimeMs,
+		toolCallCount,
+		request.RequestID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update request with response: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStorageService) EnsureDirectoryExists() error {
+	// No directory needed for SQLite
+	return nil
+}
+
+func (s *SQLiteStorageService) GetRequestByShortID(shortID string) (*model.RequestLog, string, error) {
+	query := `
+		SELECT id, timestamp, method, endpoint, headers, body, model, user_agent, content_type, prompt_grade, response, original_model, routed_model
+		FROM requests
+		WHERE id LIKE ?
+		ORDER BY timestamp DESC
+		LIMIT 1
+	`
+
+	var req model.RequestLog
+	var headersJSON, bodyJSON string
+	var promptGradeJSON, responseJSON sql.NullString
+
+	err := s.db.QueryRow(query, "%"+shortID).Scan(
+		&req.RequestID,
+		&req.Timestamp,
+		&req.Method,
+		&req.Endpoint,
+		&headersJSON,
+		&bodyJSON,
+		&req.Model,
+		&req.UserAgent,
+		&req.ContentType,
+		&promptGradeJSON,
+		&responseJSON,
+		&req.OriginalModel,
+		&req.RoutedModel,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, "", fmt.Errorf("request with ID %s not found", shortID)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to query request: %w", err)
+	}
+
+	// Unmarshal JSON fields
+	if err := json.Unmarshal([]byte(headersJSON), &req.Headers); err != nil {
+		return nil, "", fmt.Errorf("failed to unmarshal headers: %w", err)
+	}
+
+	var body interface{}
+	if err := json.Unmarshal([]byte(bodyJSON), &body); err != nil {
+		return nil, "", fmt.Errorf("failed to unmarshal body: %w", err)
+	}
+	req.Body = body
+
+	if promptGradeJSON.Valid {
+		var grade model.PromptGrade
+		if err := json.Unmarshal([]byte(promptGradeJSON.String), &grade); err == nil {
+			req.PromptGrade = &grade
+		}
+	}
+
+	if responseJSON.Valid {
+		var resp model.ResponseLog
+		if err := json.Unmarshal([]byte(responseJSON.String), &resp); err == nil {
+			req.Response = &resp
+		}
+	}
+
+	return &req, req.RequestID, nil
+}
+
+func (s *SQLiteStorageService) GetConfig() *config.StorageConfig {
+	return s.config
+}
+
+func (s *SQLiteStorageService) GetAllRequests(modelFilter string) ([]*model.RequestLog, error) {
+	query := `
+		SELECT id, timestamp, method, endpoint, headers, body, model, user_agent, content_type, prompt_grade, response, original_model, routed_model
+		FROM requests
+	`
+	args := []interface{}{}
+
+	if modelFilter != "" && modelFilter != "all" {
+		query += " WHERE LOWER(model) LIKE ?"
+		args = append(args, "%"+strings.ToLower(modelFilter)+"%")
+
+	}
+
+	query += " ORDER BY timestamp DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query requests: %w", err)
+	}
+	defer rows.Close()
+
+	var requests []*model.RequestLog
+	for rows.Next() {
+		var req model.RequestLog
+		var headersJSON, bodyJSON string
+		var promptGradeJSON, responseJSON sql.NullString
+
+		err := rows.Scan(
+			&req.RequestID,
+			&req.Timestamp,
+			&req.Method,
+			&req.Endpoint,
+			&headersJSON,
+			&bodyJSON,
+			&req.Model,
+			&req.UserAgent,
+			&req.ContentType,
+			&promptGradeJSON,
+			&responseJSON,
+			&req.OriginalModel,
+			&req.RoutedModel,
+		)
+		if err != nil {
+			continue
+		}
+
+		if err := json.Unmarshal([]byte(headersJSON), &req.Headers); err != nil {
+			continue
+		}
+
+		var body interface{}
+		if err := json.Unmarshal([]byte(bodyJSON), &body); err != nil {
+			continue
+		}
+		req.Body = body
+
+		if promptGradeJSON.Valid {
+			var grade model.PromptGrade
+			if err := json.Unmarshal([]byte(promptGradeJSON.String), &grade); err == nil {
+				req.PromptGrade = &grade
+			}
+		}
+
+		if responseJSON.Valid {
+			var resp model.ResponseLog
+			if err := json.Unmarshal([]byte(responseJSON.String), &resp); err == nil {
+				req.Response = &resp
+			}
+		}
+
+		requests = append(requests, &req)
+	}
+
+	return requests, nil
+}
+
+// GetRequestsSummary returns minimal data for list view - uses indexed columns, no JSON parsing
+func (s *SQLiteStorageService) GetRequestsSummary(modelFilter string) ([]*model.RequestSummary, error) {
+	query := `
+		SELECT id, timestamp, method, endpoint, model, original_model, routed_model,
+			   provider, subagent_name, tool_call_count, response_time_ms, first_byte_time_ms,
+			   input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+		FROM requests
+	`
+	args := []interface{}{}
+
+	if modelFilter != "" && modelFilter != "all" {
+		query += " WHERE model LIKE ?"
+		args = append(args, "%"+modelFilter+"%")
+	}
+
+	query += " ORDER BY timestamp DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query requests: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []*model.RequestSummary
+	for rows.Next() {
+		var sum model.RequestSummary
+		var provider, subagentName sql.NullString
+		var toolCallCount sql.NullInt64
+		var responseTimeMs, firstByteTimeMs sql.NullInt64
+		var inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens sql.NullInt64
+
+		err := rows.Scan(
+			&sum.RequestID,
+			&sum.Timestamp,
+			&sum.Method,
+			&sum.Endpoint,
+			&sum.Model,
+			&sum.OriginalModel,
+			&sum.RoutedModel,
+			&provider,
+			&subagentName,
+			&toolCallCount,
+			&responseTimeMs,
+			&firstByteTimeMs,
+			&inputTokens,
+			&outputTokens,
+			&cacheReadTokens,
+			&cacheCreationTokens,
+		)
+		if err != nil {
+			continue
+		}
+
+		if provider.Valid {
+			sum.Provider = provider.String
+		}
+		if subagentName.Valid {
+			sum.SubagentName = subagentName.String
+		}
+		if toolCallCount.Valid {
+			sum.ToolCallCount = int(toolCallCount.Int64)
+		}
+		if responseTimeMs.Valid {
+			sum.ResponseTime = responseTimeMs.Int64
+		}
+		if firstByteTimeMs.Valid {
+			sum.FirstByteTime = firstByteTimeMs.Int64
+		}
+
+		// Build usage from indexed columns
+		if inputTokens.Valid || outputTokens.Valid {
+			sum.Usage = &model.AnthropicUsage{
+				InputTokens:             int(inputTokens.Int64),
+				OutputTokens:            int(outputTokens.Int64),
+				CacheReadInputTokens:    int(cacheReadTokens.Int64),
+				CacheCreationInputTokens: int(cacheCreationTokens.Int64),
+			}
+		}
+
+		summaries = append(summaries, &sum)
+	}
+
+	return summaries, nil
+}
+
+// GetRequestsSummaryPaginated returns minimal data for list view with pagination - uses indexed columns
+func (s *SQLiteStorageService) GetRequestsSummaryPaginated(modelFilter, startTime, endTime string, offset, limit int) ([]*model.RequestSummary, int, error) {
+	// First get total count
+	countQuery := "SELECT COUNT(*) FROM requests"
+	countArgs := []interface{}{}
+	whereClauses := []string{}
+
+	if modelFilter != "" && modelFilter != "all" {
+		whereClauses = append(whereClauses, "model LIKE ?")
+		countArgs = append(countArgs, "%"+modelFilter+"%")
+	}
+
+	if startTime != "" && endTime != "" {
+		whereClauses = append(whereClauses, "timestamp >= ? AND timestamp < ?")
+		countArgs = append(countArgs, startTime, endTime)
+	}
+
+	if len(whereClauses) > 0 {
+		countQuery += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	var total int
+	if err := s.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Then get the requested page - no response JSON needed
+	query := `
+		SELECT id, timestamp, method, endpoint, model, original_model, routed_model,
+			   provider, subagent_name, tool_call_count, response_time_ms, first_byte_time_ms,
+			   input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+		FROM requests
+	`
+	args := []interface{}{}
+	queryWhereClauses := []string{}
+
+	if modelFilter != "" && modelFilter != "all" {
+		queryWhereClauses = append(queryWhereClauses, "model LIKE ?")
+		args = append(args, "%"+modelFilter+"%")
+	}
+
+	if startTime != "" && endTime != "" {
+		queryWhereClauses = append(queryWhereClauses, "timestamp >= ? AND timestamp < ?")
+		args = append(args, startTime, endTime)
+	}
+
+	if len(queryWhereClauses) > 0 {
+		query += " WHERE " + strings.Join(queryWhereClauses, " AND ")
+	}
+
+	query += " ORDER BY timestamp DESC"
+
+	// Only add LIMIT if specified (0 means no limit)
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	} else if offset > 0 {
+		query += " OFFSET ?"
+		args = append(args, offset)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query requests: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []*model.RequestSummary
+	for rows.Next() {
+		var sum model.RequestSummary
+		var provider, subagentName sql.NullString
+		var toolCallCount sql.NullInt64
+		var responseTimeMs, firstByteTimeMs sql.NullInt64
+		var inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens sql.NullInt64
+
+		err := rows.Scan(
+			&sum.RequestID,
+			&sum.Timestamp,
+			&sum.Method,
+			&sum.Endpoint,
+			&sum.Model,
+			&sum.OriginalModel,
+			&sum.RoutedModel,
+			&provider,
+			&subagentName,
+			&toolCallCount,
+			&responseTimeMs,
+			&firstByteTimeMs,
+			&inputTokens,
+			&outputTokens,
+			&cacheReadTokens,
+			&cacheCreationTokens,
+		)
+		if err != nil {
+			continue
+		}
+
+		if provider.Valid {
+			sum.Provider = provider.String
+		}
+		if subagentName.Valid {
+			sum.SubagentName = subagentName.String
+		}
+		if toolCallCount.Valid {
+			sum.ToolCallCount = int(toolCallCount.Int64)
+		}
+		if responseTimeMs.Valid {
+			sum.ResponseTime = responseTimeMs.Int64
+		}
+		if firstByteTimeMs.Valid {
+			sum.FirstByteTime = firstByteTimeMs.Int64
+		}
+
+		// Build usage from indexed columns
+		if inputTokens.Valid || outputTokens.Valid {
+			sum.Usage = &model.AnthropicUsage{
+				InputTokens:             int(inputTokens.Int64),
+				OutputTokens:            int(outputTokens.Int64),
+				CacheReadInputTokens:    int(cacheReadTokens.Int64),
+				CacheCreationInputTokens: int(cacheCreationTokens.Int64),
+			}
+		}
+
+		summaries = append(summaries, &sum)
+	}
+
+	return summaries, total, nil
+}
+
+// GetStats returns aggregated statistics for the dashboard - uses SQL aggregation
+func (s *SQLiteStorageService) GetStats(startDate, endDate string) (*model.DashboardStats, error) {
+	stats := &model.DashboardStats{
+		DailyStats: make([]model.DailyTokens, 0),
+	}
+
+	// SQL aggregation - no JSON parsing needed
+	query := `
+		SELECT
+			DATE(timestamp) as date,
+			COALESCE(model, 'unknown') as model,
+			COUNT(*) as requests,
+			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens
+		FROM requests
+		WHERE timestamp >= ? AND timestamp < ?
+		GROUP BY date, model
+		ORDER BY date
+	`
+
+	rows, err := s.db.Query(query, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stats: %w", err)
+	}
+	defer rows.Close()
+
+	// Aggregate by date (models already grouped by SQL)
+	dailyMap := make(map[string]*model.DailyTokens)
+
+	for rows.Next() {
+		var date, modelName string
+		var requests int
+		var tokens int64
+
+		if err := rows.Scan(&date, &modelName, &requests, &tokens); err != nil {
+			continue
+		}
+
+		if daily, ok := dailyMap[date]; ok {
+			daily.Tokens += tokens
+			daily.Requests += requests
+			daily.Models[modelName] = model.ModelStats{
+				Tokens:   tokens,
+				Requests: requests,
+			}
+		} else {
+			dailyMap[date] = &model.DailyTokens{
+				Date:     date,
+				Tokens:   tokens,
+				Requests: requests,
+				Models: map[string]model.ModelStats{
+					modelName: {
+						Tokens:   tokens,
+						Requests: requests,
+					},
+				},
+			}
+		}
+	}
+
+	// Convert map to slice
+	for _, v := range dailyMap {
+		stats.DailyStats = append(stats.DailyStats, *v)
+	}
+
+	return stats, nil
+}
+
+// GetHourlyStats returns hourly breakdown for a specific time range - uses SQL aggregation
+func (s *SQLiteStorageService) GetHourlyStats(startTime, endTime string) (*model.HourlyStatsResponse, error) {
+	// SQL aggregation - no JSON parsing needed
+	query := `
+		SELECT
+			CAST(strftime('%H', timestamp) AS INTEGER) as hour,
+			COALESCE(model, 'unknown') as model,
+			COUNT(*) as requests,
+			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens,
+			SUM(COALESCE(response_time_ms, 0)) as total_response_time,
+			SUM(CASE WHEN response_time_ms > 0 THEN 1 ELSE 0 END) as response_count
+		FROM requests
+		WHERE timestamp >= ? AND timestamp < ?
+		GROUP BY hour, model
+		ORDER BY hour
+	`
+
+	rows, err := s.db.Query(query, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query hourly stats: %w", err)
+	}
+	defer rows.Close()
+
+	hourlyMap := make(map[int]*model.HourlyTokens)
+	var totalTokens int64
+	var totalRequests int
+	var totalResponseTime int64
+	var responseCount int
+
+	for rows.Next() {
+		var hour, requests, rowResponseCount int
+		var modelName string
+		var tokens, rowResponseTime int64
+
+		if err := rows.Scan(&hour, &modelName, &requests, &tokens, &rowResponseTime, &rowResponseCount); err != nil {
+			continue
+		}
+
+		totalTokens += tokens
+		totalRequests += requests
+		totalResponseTime += rowResponseTime
+		responseCount += rowResponseCount
+
+		if hourly, ok := hourlyMap[hour]; ok {
+			hourly.Tokens += tokens
+			hourly.Requests += requests
+			hourly.Models[modelName] = model.ModelStats{
+				Tokens:   tokens,
+				Requests: requests,
+			}
+		} else {
+			hourlyMap[hour] = &model.HourlyTokens{
+				Hour:     hour,
+				Tokens:   tokens,
+				Requests: requests,
+				Models: map[string]model.ModelStats{
+					modelName: {
+						Tokens:   tokens,
+						Requests: requests,
+					},
+				},
+			}
+		}
+	}
+
+	// Convert map to slice
+	hourlyStats := make([]model.HourlyTokens, 0)
+	for _, v := range hourlyMap {
+		hourlyStats = append(hourlyStats, *v)
+	}
+
+	// Calculate average response time
+	avgResponseTime := int64(0)
+	if responseCount > 0 {
+		avgResponseTime = totalResponseTime / int64(responseCount)
+	}
+
+	return &model.HourlyStatsResponse{
+		HourlyStats:     hourlyStats,
+		TodayTokens:     totalTokens,
+		TodayRequests:   totalRequests,
+		AvgResponseTime: avgResponseTime,
+	}, nil
+}
+
+// GetModelStats returns model breakdown for a specific time range - uses SQL aggregation
+func (s *SQLiteStorageService) GetModelStats(startTime, endTime string) (*model.ModelStatsResponse, error) {
+	// SQL aggregation - no JSON parsing needed
+	query := `
+		SELECT
+			COALESCE(model, 'unknown') as model,
+			COUNT(*) as requests,
+			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens
+		FROM requests
+		WHERE timestamp >= ? AND timestamp < ?
+		GROUP BY model
+		ORDER BY tokens DESC
+	`
+
+	rows, err := s.db.Query(query, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query model stats: %w", err)
+	}
+	defer rows.Close()
+
+	modelStats := make([]model.ModelTokens, 0)
+
+	for rows.Next() {
+		var modelName string
+		var requests int
+		var tokens int64
+
+		if err := rows.Scan(&modelName, &requests, &tokens); err != nil {
+			continue
+		}
+
+		modelStats = append(modelStats, model.ModelTokens{
+			Model:    modelName,
+			Tokens:   tokens,
+			Requests: requests,
+		})
+	}
+
+	return &model.ModelStatsResponse{
+		ModelStats: modelStats,
+	}, nil
+}
+
+// GetLatestRequestDate returns the timestamp of the most recent request
+func (s *SQLiteStorageService) GetLatestRequestDate() (*time.Time, error) {
+	var timestamp string
+	err := s.db.QueryRow("SELECT timestamp FROM requests ORDER BY timestamp DESC LIMIT 1").Scan(&timestamp)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query latest request: %w", err)
+	}
+
+	t, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse timestamp: %w", err)
+	}
+
+	return &t, nil
+}
+
+func (s *SQLiteStorageService) Close() error {
+	return s.db.Close()
+}
+
+// GetProviderStats returns analytics broken down by provider
+func (s *SQLiteStorageService) GetProviderStats(startTime, endTime string) (*model.ProviderStatsResponse, error) {
+	query := `
+		SELECT
+			COALESCE(provider, 'unknown') as provider,
+			COUNT(*) as requests,
+			SUM(input_tokens) as input_tokens,
+			SUM(output_tokens) as output_tokens,
+			AVG(response_time_ms) as avg_response_ms
+		FROM requests
+		WHERE timestamp >= ? AND timestamp < ?
+		GROUP BY provider
+	`
+
+	rows, err := s.db.Query(query, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query provider stats: %w", err)
+	}
+	defer rows.Close()
+
+	var providers []model.ProviderStats
+	for rows.Next() {
+		var stat model.ProviderStats
+		var inputTokens, outputTokens sql.NullInt64
+		var avgResponseMs sql.NullFloat64
+
+		if err := rows.Scan(&stat.Provider, &stat.Requests, &inputTokens, &outputTokens, &avgResponseMs); err != nil {
+			continue
+		}
+
+		if inputTokens.Valid {
+			stat.InputTokens = inputTokens.Int64
+		}
+		if outputTokens.Valid {
+			stat.OutputTokens = outputTokens.Int64
+		}
+		stat.TotalTokens = stat.InputTokens + stat.OutputTokens
+		if avgResponseMs.Valid {
+			stat.AvgResponseMs = int64(avgResponseMs.Float64)
+		}
+
+		providers = append(providers, stat)
+	}
+
+	return &model.ProviderStatsResponse{
+		Providers: providers,
+		StartTime: startTime,
+		EndTime:   endTime,
+	}, nil
+}
+
+// GetSubagentStats returns analytics broken down by subagent
+func (s *SQLiteStorageService) GetSubagentStats(startTime, endTime string) (*model.SubagentStatsResponse, error) {
+	query := `
+		SELECT
+			COALESCE(subagent_name, '') as subagent_name,
+			COALESCE(provider, 'unknown') as provider,
+			COALESCE(routed_model, model) as target_model,
+			COUNT(*) as requests,
+			SUM(input_tokens) as input_tokens,
+			SUM(output_tokens) as output_tokens,
+			AVG(response_time_ms) as avg_response_ms
+		FROM requests
+		WHERE timestamp >= ? AND timestamp < ?
+		  AND subagent_name IS NOT NULL AND subagent_name != ''
+		GROUP BY subagent_name, provider, target_model
+	`
+
+	rows, err := s.db.Query(query, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query subagent stats: %w", err)
+	}
+	defer rows.Close()
+
+	var subagents []model.SubagentStats
+	for rows.Next() {
+		var stat model.SubagentStats
+		var inputTokens, outputTokens sql.NullInt64
+		var avgResponseMs sql.NullFloat64
+
+		if err := rows.Scan(&stat.SubagentName, &stat.Provider, &stat.TargetModel, &stat.Requests, &inputTokens, &outputTokens, &avgResponseMs); err != nil {
+			continue
+		}
+
+		if inputTokens.Valid {
+			stat.InputTokens = inputTokens.Int64
+		}
+		if outputTokens.Valid {
+			stat.OutputTokens = outputTokens.Int64
+		}
+		stat.TotalTokens = stat.InputTokens + stat.OutputTokens
+		if avgResponseMs.Valid {
+			stat.AvgResponseMs = int64(avgResponseMs.Float64)
+		}
+
+		subagents = append(subagents, stat)
+	}
+
+	return &model.SubagentStatsResponse{
+		Subagents: subagents,
+		StartTime: startTime,
+		EndTime:   endTime,
+	}, nil
+}
+
+// GetToolStats returns analytics broken down by tool usage
+func (s *SQLiteStorageService) GetToolStats(startTime, endTime string) (*model.ToolStatsResponse, error) {
+	query := `
+		SELECT tools_used, tool_call_count
+		FROM requests
+		WHERE timestamp >= ? AND timestamp < ?
+		  AND tools_used IS NOT NULL AND tools_used != '[]' AND tools_used != 'null'
+	`
+
+	rows, err := s.db.Query(query, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tool stats: %w", err)
+	}
+	defer rows.Close()
+
+	toolUsageCount := make(map[string]int)  // How many requests included this tool
+	toolCallCount := make(map[string]int)   // Total calls across all requests
+
+	for rows.Next() {
+		var toolsUsedJSON string
+		var callCount int
+
+		if err := rows.Scan(&toolsUsedJSON, &callCount); err != nil {
+			continue
+		}
+
+		var tools []string
+		if err := json.Unmarshal([]byte(toolsUsedJSON), &tools); err != nil {
+			continue
+		}
+
+		// Count each tool's presence in this request
+		for _, tool := range tools {
+			if tool != "" {
+				toolUsageCount[tool]++
+			}
+		}
+	}
+
+	var toolStats []model.ToolStats
+	for toolName, usageCount := range toolUsageCount {
+		stat := model.ToolStats{
+			ToolName:   toolName,
+			UsageCount: usageCount,
+			CallCount:  toolCallCount[toolName],
+		}
+		if usageCount > 0 {
+			stat.AvgCallsPerRequest = float64(toolCallCount[toolName]) / float64(usageCount)
+		}
+		toolStats = append(toolStats, stat)
+	}
+
+	return &model.ToolStatsResponse{
+		Tools:     toolStats,
+		StartTime: startTime,
+		EndTime:   endTime,
+	}, nil
+}
+
+// GetPerformanceStats returns response time analytics by provider/model
+func (s *SQLiteStorageService) GetPerformanceStats(startTime, endTime string) (*model.PerformanceStatsResponse, error) {
+	query := `
+		SELECT
+			COALESCE(provider, 'unknown') as provider,
+			COALESCE(model, 'unknown') as model,
+			response_time_ms,
+			first_byte_time_ms
+		FROM requests
+		WHERE timestamp >= ? AND timestamp < ?
+		  AND response_time_ms > 0
+		ORDER BY provider, model
+	`
+
+	rows, err := s.db.Query(query, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query performance stats: %w", err)
+	}
+	defer rows.Close()
+
+	// Collect response times by provider+model
+	type key struct {
+		provider string
+		model    string
+	}
+	responseTimes := make(map[key][]int64)
+	firstByteTimes := make(map[key][]int64)
+
+	for rows.Next() {
+		var provider, modelName string
+		var responseTimeMs, firstByteTimeMs int64
+
+		if err := rows.Scan(&provider, &modelName, &responseTimeMs, &firstByteTimeMs); err != nil {
+			continue
+		}
+
+		k := key{provider: provider, model: modelName}
+		responseTimes[k] = append(responseTimes[k], responseTimeMs)
+		if firstByteTimeMs > 0 {
+			firstByteTimes[k] = append(firstByteTimes[k], firstByteTimeMs)
+		}
+	}
+
+	var stats []model.PerformanceStats
+	for k, times := range responseTimes {
+		if len(times) == 0 {
+			continue
+		}
+
+		// Sort for percentile calculation
+		sortedTimes := make([]int64, len(times))
+		copy(sortedTimes, times)
+		sortInt64Slice(sortedTimes)
+
+		stat := model.PerformanceStats{
+			Provider:      k.provider,
+			Model:         k.model,
+			RequestCount:  len(times),
+			AvgResponseMs: avgInt64(times),
+			P50ResponseMs: percentileInt64(sortedTimes, 50),
+			P95ResponseMs: percentileInt64(sortedTimes, 95),
+			P99ResponseMs: percentileInt64(sortedTimes, 99),
+		}
+
+		if fbt, exists := firstByteTimes[k]; exists && len(fbt) > 0 {
+			stat.AvgFirstByteMs = avgInt64(fbt)
+		}
+
+		stats = append(stats, stat)
+	}
+
+	return &model.PerformanceStatsResponse{
+		Stats:     stats,
+		StartTime: startTime,
+		EndTime:   endTime,
+	}, nil
+}
+
+// Helper functions for statistics
+func sortInt64Slice(s []int64) {
+	for i := 0; i < len(s)-1; i++ {
+		for j := i + 1; j < len(s); j++ {
+			if s[i] > s[j] {
+				s[i], s[j] = s[j], s[i]
+			}
+		}
+	}
+}
+
+func avgInt64(s []int64) int64 {
+	if len(s) == 0 {
+		return 0
+	}
+	var sum int64
+	for _, v := range s {
+		sum += v
+	}
+	return sum / int64(len(s))
+}
+
+func percentileInt64(sorted []int64, p int) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := (len(sorted) * p) / 100
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
+}
+
+// SearchConversations performs FTS5 search on conversation content (with fallback for test mode)
+func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*model.SearchResults, error) {
+	// Build FTS5 query - convert user input to OR logic for multi-term searches
+	terms := strings.Fields(opts.Query)
+	if len(terms) == 0 {
+		return &model.SearchResults{
+			Query:   opts.Query,
+			Results: []*model.ConversationMatch{},
+			Total:   0,
+			Limit:   opts.Limit,
+			Offset:  opts.Offset,
+		}, nil
+	}
+
+	// Check if FTS5 is available
+	if !fts5Enabled() {
+		// Fallback to LIKE-based search for test builds
+		return s.searchConversationsLike(opts, terms)
+	}
+
+	// Escape FTS5 special characters and build OR query
+	var escapedTerms []string
+	for _, term := range terms {
+		// Escape double quotes by doubling them
+		escaped := strings.ReplaceAll(term, `"`, `""`)
+		escapedTerms = append(escapedTerms, fmt.Sprintf(`"%s"`, escaped))
+	}
+	ftsQuery := strings.Join(escapedTerms, " OR ")
+
+	// Build the main query
+	query := `
+		SELECT
+			c.id AS conversation_id,
+			c.project_name,
+			c.project_path,
+			c.end_time AS last_activity,
+			COUNT(f.rowid) AS match_count
+		FROM conversations_fts f
+		JOIN conversations c ON f.conversation_id = c.id
+		WHERE conversations_fts MATCH ?
+	`
+	args := []interface{}{ftsQuery}
+
+	// Add project filter if specified
+	if opts.ProjectPath != "" {
+		query += " AND c.project_path = ?"
+		args = append(args, opts.ProjectPath)
+	}
+
+	query += `
+		GROUP BY c.id
+		ORDER BY match_count DESC, c.end_time DESC
+	`
+
+	// Get total count first
+	countQuery := strings.Replace(query,
+		"SELECT\n\t\t\tc.id AS conversation_id,\n\t\t\tc.project_name,\n\t\t\tc.project_path,\n\t\t\tc.end_time AS last_activity,\n\t\t\tCOUNT(f.rowid) AS match_count",
+		"SELECT COUNT(DISTINCT c.id)",
+		1)
+
+	// Remove ORDER BY and GROUP BY for count query
+	countQuery = strings.Split(countQuery, "GROUP BY")[0]
+
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Add pagination
+	query += " LIMIT ? OFFSET ?"
+	args = append(args, opts.Limit, opts.Offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query conversations: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]*model.ConversationMatch, 0)
+	for rows.Next() {
+		var match model.ConversationMatch
+		var lastActivity sql.NullString
+
+		if err := rows.Scan(
+			&match.ConversationID,
+			&match.ProjectName,
+			&match.ProjectPath,
+			&lastActivity,
+			&match.MatchCount,
+		); err != nil {
+			continue
+		}
+
+		if lastActivity.Valid {
+			if t, err := time.Parse(time.RFC3339, lastActivity.String); err == nil {
+				match.LastActivity = t
+			}
+		}
+
+		results = append(results, &match)
+	}
+
+	return &model.SearchResults{
+		Query:   opts.Query,
+		Results: results,
+		Total:   total,
+		Limit:   opts.Limit,
+		Offset:  opts.Offset,
+	}, nil
+}
+
+// SearchRequests performs full-text search on request data
+func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, limit, offset int) (*model.RequestSearchResults, error) {
+	// Build FTS5 query - convert user input to OR logic for multi-term searches
+	terms := strings.Fields(query)
+	if len(terms) == 0 {
+		return &model.RequestSearchResults{
+			Query:   query,
+			Results: []*model.RequestSearchResult{},
+			Total:   0,
+			Limit:   limit,
+			Offset:  offset,
+		}, nil
+	}
+
+	// Check if FTS5 is available
+	if !fts5Enabled() {
+		// Fallback to LIKE-based search for test builds
+		return s.searchRequestsLike(query, modelFilter, terms, limit, offset)
+	}
+
+	// Escape FTS5 special characters and build OR query
+	var escapedTerms []string
+	for _, term := range terms {
+		// Escape double quotes by doubling them
+		escaped := strings.ReplaceAll(term, `"`, `""`)
+		escapedTerms = append(escapedTerms, fmt.Sprintf(`"%s"`, escaped))
+	}
+	ftsQuery := strings.Join(escapedTerms, " OR ")
+
+	// Build the main query - count distinct requests matching FTS
+	countQuery := `
+		SELECT COUNT(DISTINCT r.id)
+		FROM requests_fts f
+		JOIN requests r ON f.request_id = r.id
+		WHERE requests_fts MATCH ?
+	`
+	args := []interface{}{ftsQuery}
+
+	// Add model filter if specified
+	if modelFilter != "" {
+		countQuery += " AND r.model = ?"
+		args = append(args, modelFilter)
+	}
+
+	// Get total count
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Build the results query
+	resultQuery := `
+		SELECT DISTINCT
+			r.id,
+			r.timestamp,
+			r.method,
+			r.endpoint,
+			r.model,
+			r.provider,
+			COUNT(f.rowid) as match_count,
+			SUBSTR(f.response_text, 1, 120) as snippet
+		FROM requests_fts f
+		JOIN requests r ON f.request_id = r.id
+		WHERE requests_fts MATCH ?
+	`
+	queryArgs := []interface{}{ftsQuery}
+
+	// Add model filter if specified
+	if modelFilter != "" {
+		resultQuery += " AND r.model = ?"
+		queryArgs = append(queryArgs, modelFilter)
+	}
+
+	resultQuery += `
+		GROUP BY r.id
+		ORDER BY match_count DESC, r.timestamp DESC
+		LIMIT ? OFFSET ?
+	`
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := s.db.Query(resultQuery, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query requests: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]*model.RequestSearchResult, 0)
+	for rows.Next() {
+		var result model.RequestSearchResult
+		var snippet sql.NullString
+
+		if err := rows.Scan(
+			&result.RequestID,
+			&result.Timestamp,
+			&result.Method,
+			&result.Endpoint,
+			&result.Model,
+			&result.Provider,
+			&result.MatchCount,
+			&snippet,
+		); err != nil {
+			continue
+		}
+
+		if snippet.Valid {
+			result.Snippet = snippet.String
+		}
+
+		results = append(results, &result)
+	}
+
+	return &model.RequestSearchResults{
+		Query:   query,
+		Results: results,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+	}, nil
+}
+
+// searchConversationsLike is a fallback for test builds without FTS5
+func (s *SQLiteStorageService) searchConversationsLike(opts model.SearchOptions, terms []string) (*model.SearchResults, error) {
+	// Build LIKE-based query for each term
+	whereClauses := []string{}
+	args := []interface{}{}
+
+	for _, term := range terms {
+		whereClauses = append(whereClauses, "(cm.content_json LIKE ? OR cm.tool_use_json LIKE ?)")
+		likePattern := "%" + term + "%"
+		args = append(args, likePattern, likePattern)
+	}
+
+	whereClause := strings.Join(whereClauses, " OR ")
+
+	// Count query
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(DISTINCT c.id)
+		FROM conversations c
+		JOIN conversation_messages cm ON c.id = cm.conversation_id
+		WHERE %s
+	`, whereClause)
+
+	if opts.ProjectPath != "" {
+		countQuery += " AND c.project_path = ?"
+		args = append(args, opts.ProjectPath)
+	}
+
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Main query with pagination
+	query := fmt.Sprintf(`
+		SELECT
+			c.id AS conversation_id,
+			c.project_name,
+			c.project_path,
+			c.end_time AS last_activity,
+			COUNT(cm.uuid) AS match_count
+		FROM conversations c
+		JOIN conversation_messages cm ON c.id = cm.conversation_id
+		WHERE %s
+	`, whereClause)
+
+	queryArgs := make([]interface{}, len(args))
+	copy(queryArgs, args)
+
+	if opts.ProjectPath != "" {
+		query += " AND c.project_path = ?"
+	}
+
+	query += `
+		GROUP BY c.id
+		ORDER BY match_count DESC, c.end_time DESC
+		LIMIT ? OFFSET ?
+	`
+	queryArgs = append(queryArgs, opts.Limit, opts.Offset)
+
+	rows, err := s.db.Query(query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query conversations: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]*model.ConversationMatch, 0)
+	for rows.Next() {
+		var match model.ConversationMatch
+		var lastActivity sql.NullString
+
+		if err := rows.Scan(
+			&match.ConversationID,
+			&match.ProjectName,
+			&match.ProjectPath,
+			&lastActivity,
+			&match.MatchCount,
+		); err != nil {
+			continue
+		}
+
+		if lastActivity.Valid {
+			if t, err := time.Parse(time.RFC3339, lastActivity.String); err == nil {
+				match.LastActivity = t
+			}
+		}
+
+		results = append(results, &match)
+	}
+
+	return &model.SearchResults{
+		Query:   opts.Query,
+		Results: results,
+		Total:   total,
+		Limit:   opts.Limit,
+		Offset:  opts.Offset,
+	}, nil
+}
+
+// searchRequestsLike is a fallback for test builds without FTS5
+func (s *SQLiteStorageService) searchRequestsLike(query, modelFilter string, terms []string, limit, offset int) (*model.RequestSearchResults, error) {
+	// Build LIKE-based query for each term
+	whereClauses := []string{}
+	args := []interface{}{}
+
+	for _, term := range terms {
+		whereClauses = append(whereClauses, "(r.endpoint LIKE ? OR r.method LIKE ? OR r.model LIKE ? OR r.provider LIKE ? OR r.tools_used LIKE ?)")
+		likePattern := "%" + term + "%"
+		args = append(args, likePattern, likePattern, likePattern, likePattern, likePattern)
+	}
+
+	whereClause := strings.Join(whereClauses, " OR ")
+
+	// Count query
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM requests r
+		WHERE %s
+	`, whereClause)
+
+	if modelFilter != "" {
+		countQuery += " AND r.model = ?"
+		args = append(args, modelFilter)
+	}
+
+	var total int
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Main query with pagination
+	resultQuery := fmt.Sprintf(`
+		SELECT
+			r.id,
+			r.timestamp,
+			r.method,
+			r.endpoint,
+			r.model,
+			r.provider,
+			1 as match_count,
+			SUBSTR(r.endpoint, 1, 120) as snippet
+		FROM requests r
+		WHERE %s
+	`, whereClause)
+
+	queryArgs := make([]interface{}, len(args))
+	copy(queryArgs, args)
+
+	if modelFilter != "" {
+		resultQuery += " AND r.model = ?"
+		queryArgs = append(queryArgs, modelFilter)
+	}
+
+	resultQuery += `
+		ORDER BY r.timestamp DESC
+		LIMIT ? OFFSET ?
+	`
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := s.db.Query(resultQuery, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query requests: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]*model.RequestSearchResult, 0)
+	for rows.Next() {
+		var result model.RequestSearchResult
+		var snippet sql.NullString
+
+		if err := rows.Scan(
+			&result.RequestID,
+			&result.Timestamp,
+			&result.Method,
+			&result.Endpoint,
+			&result.Model,
+			&result.Provider,
+			&result.MatchCount,
+			&snippet,
+		); err != nil {
+			continue
+		}
+
+		if snippet.Valid {
+			result.Snippet = snippet.String
+		}
+
+		results = append(results, &result)
+	}
+
+	return &model.RequestSearchResults{
+		Query:   query,
+		Results: results,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+	}, nil
+}
+
+// GetIndexedConversations returns conversations from the database index - very fast
+func (s *SQLiteStorageService) GetIndexedConversations(limit int) ([]*model.IndexedConversation, error) {
+	query := `
+		SELECT id, project_path, project_name, start_time, end_time, message_count
+		FROM conversations
+		WHERE message_count > 0
+		ORDER BY end_time DESC
+	`
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	log.Printf("🔍 GetIndexedConversations: limit=%d, final query: %s", limit, query)
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query indexed conversations: %w", err)
+	}
+	defer rows.Close()
+
+	var conversations []*model.IndexedConversation
+	for rows.Next() {
+		var conv model.IndexedConversation
+		var startTime, endTime sql.NullString
+
+		if err := rows.Scan(
+			&conv.ID,
+			&conv.ProjectPath,
+			&conv.ProjectName,
+			&startTime,
+			&endTime,
+			&conv.MessageCount,
+		); err != nil {
+			continue
+		}
+
+		if startTime.Valid {
+			if t, err := time.Parse(time.RFC3339, startTime.String); err == nil {
+				conv.StartTime = t
+			}
+		}
+		if endTime.Valid {
+			if t, err := time.Parse(time.RFC3339, endTime.String); err == nil {
+				conv.EndTime = t
+			}
+		}
+
+		conversations = append(conversations, &conv)
+	}
+
+	return conversations, nil
+}
+
+// GetConversationFilePath returns the file path and project path for a conversation by ID
+func (s *SQLiteStorageService) GetConversationFilePath(conversationID string) (string, string, error) {
+	var filePath, projectPath string
+	err := s.db.QueryRow(
+		"SELECT file_path, project_path FROM conversations WHERE id = ?",
+		conversationID,
+	).Scan(&filePath, &projectPath)
+	if err != nil {
+		return "", "", fmt.Errorf("conversation not found: %w", err)
+	}
+	return filePath, projectPath, nil
+}
+
+// GetConversationMessages returns messages for a conversation from the database
+func (s *SQLiteStorageService) GetConversationMessages(conversationID string, limit, offset int) ([]*model.DBConversationMessage, int, error) {
+	// Get total count
+	var total int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = ?", conversationID).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count messages: %w", err)
+	}
+
+	// Set default limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT uuid, conversation_id, parent_uuid, type, role, timestamp,
+		       cwd, git_branch, session_id, agent_id, is_sidechain,
+		       request_id, model, input_tokens, output_tokens,
+		       cache_read_tokens, cache_creation_tokens, content_json
+		FROM conversation_messages
+		WHERE conversation_id = ?
+		ORDER BY timestamp ASC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := s.db.Query(query, conversationID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query messages: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []*model.DBConversationMessage
+	for rows.Next() {
+		var msg model.DBConversationMessage
+		var parentUUID, role, cwd, gitBranch, sessionID, agentID, requestID, modelName sql.NullString
+		var contentJSON sql.NullString
+		var timestampStr string
+
+		err := rows.Scan(
+			&msg.UUID,
+			&msg.ConversationID,
+			&parentUUID,
+			&msg.Type,
+			&role,
+			&timestampStr,
+			&cwd,
+			&gitBranch,
+			&sessionID,
+			&agentID,
+			&msg.IsSidechain,
+			&requestID,
+			&modelName,
+			&msg.InputTokens,
+			&msg.OutputTokens,
+			&msg.CacheReadTokens,
+			&msg.CacheCreationTokens,
+			&contentJSON,
+		)
+		if err != nil {
+			log.Printf("⚠️ Error scanning message row: %v", err)
+			continue
+		}
+
+		// Parse timestamp
+		if t, err := time.Parse(time.RFC3339, timestampStr); err == nil {
+			msg.Timestamp = t
+		}
+
+		// Handle nullable fields
+		if parentUUID.Valid {
+			msg.ParentUUID = &parentUUID.String
+		}
+		if role.Valid {
+			msg.Role = role.String
+		}
+		if cwd.Valid {
+			msg.CWD = cwd.String
+		}
+		if gitBranch.Valid {
+			msg.GitBranch = gitBranch.String
+		}
+		if sessionID.Valid {
+			msg.SessionID = sessionID.String
+		}
+		if agentID.Valid {
+			msg.AgentID = agentID.String
+		}
+		if requestID.Valid {
+			msg.RequestID = requestID.String
+		}
+		if modelName.Valid {
+			msg.Model = modelName.String
+		}
+		if contentJSON.Valid {
+			msg.Content = json.RawMessage(contentJSON.String)
+		}
+
+		messages = append(messages, &msg)
+	}
+
+	return messages, total, nil
+}
+
+// GetConversationMessagesWithSubagents returns messages including subagent messages merged by timestamp
+func (s *SQLiteStorageService) GetConversationMessagesWithSubagents(conversationID string, limit, offset int) ([]*model.DBConversationMessage, int, error) {
+	// Get messages from parent conversation + all subagent conversations
+	// Subagent messages have session_id matching the parent conversation_id
+
+	// Set default limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// First get the count of all messages (parent + subagents)
+	var total int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM conversation_messages
+		WHERE conversation_id = ? OR session_id = ?
+	`, conversationID, conversationID).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count messages: %w", err)
+	}
+
+	// Get all messages from parent and subagents, ordered by timestamp
+	query := `
+		SELECT uuid, conversation_id, parent_uuid, type, role, timestamp,
+		       cwd, git_branch, session_id, agent_id, is_sidechain,
+		       request_id, model, input_tokens, output_tokens,
+		       cache_read_tokens, cache_creation_tokens, content_json
+		FROM conversation_messages
+		WHERE conversation_id = ? OR session_id = ?
+		ORDER BY timestamp ASC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := s.db.Query(query, conversationID, conversationID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query messages: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []*model.DBConversationMessage
+	for rows.Next() {
+		var msg model.DBConversationMessage
+		var parentUUID, role, cwd, gitBranch, sessionID, agentID, requestID, modelName sql.NullString
+		var contentJSON sql.NullString
+		var timestampStr string
+
+		err := rows.Scan(
+			&msg.UUID,
+			&msg.ConversationID,
+			&parentUUID,
+			&msg.Type,
+			&role,
+			&timestampStr,
+			&cwd,
+			&gitBranch,
+			&sessionID,
+			&agentID,
+			&msg.IsSidechain,
+			&requestID,
+			&modelName,
+			&msg.InputTokens,
+			&msg.OutputTokens,
+			&msg.CacheReadTokens,
+			&msg.CacheCreationTokens,
+			&contentJSON,
+		)
+		if err != nil {
+			log.Printf("⚠️ Error scanning message row: %v", err)
+			continue
+		}
+
+		// Parse timestamp
+		if t, err := time.Parse(time.RFC3339, timestampStr); err == nil {
+			msg.Timestamp = t
+		}
+
+		// Handle nullable fields
+		if parentUUID.Valid {
+			msg.ParentUUID = &parentUUID.String
+		}
+		if role.Valid {
+			msg.Role = role.String
+		}
+		if cwd.Valid {
+			msg.CWD = cwd.String
+		}
+		if gitBranch.Valid {
+			msg.GitBranch = gitBranch.String
+		}
+		if sessionID.Valid {
+			msg.SessionID = sessionID.String
+		}
+		if agentID.Valid {
+			msg.AgentID = agentID.String
+		}
+		if requestID.Valid {
+			msg.RequestID = requestID.String
+		}
+		if modelName.Valid {
+			msg.Model = modelName.String
+		}
+		if contentJSON.Valid {
+			msg.Content = json.RawMessage(contentJSON.String)
+		}
+
+		messages = append(messages, &msg)
+	}
+
+	return messages, total, nil
+}
+
+// ReindexConversations triggers a full re-index by clearing indexed_at timestamps
+func (s *SQLiteStorageService) ReindexConversations() error {
+	_, err := s.db.Exec("UPDATE conversations SET indexed_at = NULL")
+	if err != nil {
+		return fmt.Errorf("failed to clear indexed_at: %w", err)
+	}
+	log.Println("🔄 Cleared indexed_at timestamps - conversations will be re-indexed")
+	return nil
+}
+
+// DB returns the underlying database connection - for subagent indexer use
+func (s *SQLiteStorageService) DB() *sql.DB {
+	return s.db
+}
+
+// GetDB returns the underlying database connection for internal package use only (DEPRECATED: use DB())
+func (s *SQLiteStorageService) GetDB() *sql.DB {
+	return s.db
+}
+
+// Extension storage methods
+
+// GetExtensionsFiltered returns extensions with optional type, source, and search filters
+func (s *SQLiteStorageService) GetExtensionsFiltered(extType, source, search string) ([]*model.Extension, error) {
+	query := `SELECT id, type, name, description, enabled, source, plugin_id, marketplace_id, file_path, project_path, 
+	                 metadata_json, created_at, updated_at FROM extensions WHERE 1=1`
+	var args []interface{}
+
+	if extType != "" {
+		query += " AND type = ?"
+		args = append(args, extType)
+	}
+
+	if source != "" {
+		query += " AND source = ?"
+		args = append(args, source)
+	}
+
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		query += " AND (name LIKE ? OR description LIKE ?)"
+		args = append(args, searchPattern, searchPattern)
+	}
+
+	query += " ORDER BY type, name"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extensions: %w", err)
+	}
+	defer rows.Close()
+
+	var extensions []*model.Extension
+	for rows.Next() {
+		ext, err := scanExtension(rows)
+		if err != nil {
+			return nil, err
+		}
+		extensions = append(extensions, ext)
+	}
+
+	return extensions, nil
+}
+
+// GetExtensions returns extensions filtered by type (legacy method for compatibility)
+func (s *SQLiteStorageService) GetExtensions(extType string) ([]*model.Extension, error) {
+	return s.GetExtensionsFiltered(extType, "", "")
+}
+
+// GetExtension returns a single extension by type and ID
+func (s *SQLiteStorageService) GetExtension(extType, id string) (*model.Extension, error) {
+	query := `SELECT id, type, name, description, enabled, source, plugin_id, marketplace_id, file_path, project_path,
+	                 metadata_json, created_at, updated_at FROM extensions WHERE type = ? AND id = ?`
+
+	row := s.db.QueryRow(query, extType, id)
+	ext, err := scanExtensionRow(row)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("extension not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extension: %w", err)
+	}
+
+	return ext, nil
+}
+
+// SaveExtension inserts or updates an extension
+func (s *SQLiteStorageService) SaveExtension(ext *model.Extension) error {
+	query := `INSERT OR REPLACE INTO extensions 
+	          (id, type, name, description, enabled, source, plugin_id, marketplace_id, file_path, project_path, metadata_json, updated_at)
+	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+
+	_, err := s.db.Exec(query,
+		ext.ID,
+		ext.Type,
+		ext.Name,
+		ext.Description,
+		ext.Enabled,
+		ext.Source,
+		ext.PluginID,
+		ext.MarketplaceID,
+		ext.FilePath,
+		ext.ProjectPath,
+		string(ext.MetadataJSON),
+	)
+	return err
+}
+
+// DeleteExtension removes an extension by ID
+func (s *SQLiteStorageService) DeleteExtension(id string) error {
+	_, err := s.db.Exec("DELETE FROM extensions WHERE id = ?", id)
+	return err
+}
+
+// UpdateExtensionEnabled toggles extension enabled state
+func (s *SQLiteStorageService) UpdateExtensionEnabled(id string, enabled bool) error {
+	query := "UPDATE extensions SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+	_, err := s.db.Exec(query, enabled, id)
+	if err != nil {
+		return fmt.Errorf("failed to update extension: %w", err)
+	}
+	return nil
+}
+
+// GetExtensionStats returns aggregate statistics about extensions
+func (s *SQLiteStorageService) GetExtensionStats() (*model.ExtensionStatsResponse, error) {
+	// Get total count and by type
+	rows, err := s.db.Query("SELECT type, COUNT(*) as count FROM extensions GROUP BY type")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query extension stats: %w", err)
+	}
+	defer rows.Close()
+
+	byType := make(map[string]int)
+	var total int
+
+	for rows.Next() {
+		var extType string
+		var count int
+		if err := rows.Scan(&extType, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan extension stats: %w", err)
+		}
+		byType[extType] = count
+		total += count
+	}
+
+	// Get enabled plugins
+	enabledRows, err := s.db.Query("SELECT id FROM extensions WHERE enabled = TRUE AND type = 'plugin' ORDER BY name")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query enabled plugins: %w", err)
+	}
+	defer enabledRows.Close()
+
+	var enabledPlugins []string
+	for enabledRows.Next() {
+		var id string
+		if err := enabledRows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan enabled plugin: %w", err)
+		}
+		enabledPlugins = append(enabledPlugins, id)
+	}
+
+	// Get disabled plugins
+	disabledRows, err := s.db.Query("SELECT id FROM extensions WHERE enabled = FALSE AND type = 'plugin' ORDER BY name")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query disabled plugins: %w", err)
+	}
+	defer disabledRows.Close()
+
+	var disabledPlugins []string
+	for disabledRows.Next() {
+		var id string
+		if err := disabledRows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan disabled plugin: %w", err)
+		}
+		disabledPlugins = append(disabledPlugins, id)
+	}
+
+	return &model.ExtensionStatsResponse{
+		Stats: model.ExtensionStats{
+			Total:           total,
+			ByType:          byType,
+			EnabledPlugins:  enabledPlugins,
+			DisabledPlugins: disabledPlugins,
+		},
+	}, nil
+}
+
+// scanExtension is a helper to scan a row into an Extension model
+func scanExtension(rows *sql.Rows) (*model.Extension, error) {
+	var ext model.Extension
+	var metadataJSON, filePath sql.NullString
+	var pluginID, marketplaceID, projectPath sql.NullString
+	var createdAt, updatedAt sql.NullTime
+
+	err := rows.Scan(
+		&ext.ID, &ext.Type, &ext.Name, &ext.Description, &ext.Enabled,
+		&ext.Source, &pluginID, &marketplaceID, &filePath, &projectPath,
+		&metadataJSON, &createdAt, &updatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan extension: %w", err)
+	}
+
+	if metadataJSON.Valid {
+		ext.MetadataJSON = json.RawMessage(metadataJSON.String)
+	}
+	if pluginID.Valid {
+		ext.PluginID = &pluginID.String
+	}
+	if marketplaceID.Valid {
+		ext.MarketplaceID = &marketplaceID.String
+	}
+	if filePath.Valid {
+		ext.FilePath = filePath.String
+	}
+	if projectPath.Valid {
+		ext.ProjectPath = &projectPath.String
+	}
+	if createdAt.Valid {
+		ext.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		ext.UpdatedAt = updatedAt.Time
+	}
+
+	return &ext, nil
+}
+
+// scanExtensionRow is a helper to scan a QueryRow result into an Extension model
+func scanExtensionRow(row *sql.Row) (*model.Extension, error) {
+	var ext model.Extension
+	var metadataJSON, filePath sql.NullString
+	var pluginID, marketplaceID, projectPath sql.NullString
+	var createdAt, updatedAt sql.NullTime
+
+	err := row.Scan(
+		&ext.ID, &ext.Type, &ext.Name, &ext.Description, &ext.Enabled,
+		&ext.Source, &pluginID, &marketplaceID, &filePath, &projectPath,
+		&metadataJSON, &createdAt, &updatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if metadataJSON.Valid {
+		ext.MetadataJSON = json.RawMessage(metadataJSON.String)
+	}
+	if pluginID.Valid {
+		ext.PluginID = &pluginID.String
+	}
+	if marketplaceID.Valid {
+		ext.MarketplaceID = &marketplaceID.String
+	}
+	if filePath.Valid {
+		ext.FilePath = filePath.String
+	}
+	if projectPath.Valid {
+		ext.ProjectPath = &projectPath.String
+	}
+	if createdAt.Valid {
+		ext.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		ext.UpdatedAt = updatedAt.Time
+	}
+
+	return &ext, nil
+}
+
+// GetSubagentHierarchy returns the full agent hierarchy for a session
+func (s *SQLiteStorageService) GetSubagentHierarchy(sessionID string) (*model.SubagentGraphResponse, error) {
+	query := `
+		SELECT id, session_id, parent_agent_id, agent_id,
+		       first_message_uuid, last_message_uuid, message_count,
+		       spawn_time, end_time, status, is_sidechain
+		FROM subagent_graph
+		WHERE session_id = ?
+		ORDER BY spawn_time ASC
+	`
+
+	rows, err := s.db.Query(query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query subagent graph: %w", err)
+	}
+	defer rows.Close()
+
+	nodes := make(map[string]*model.SubagentGraphNode)
+	var allNodes []*model.SubagentGraphNode
+
+	for rows.Next() {
+		var node model.SubagentGraphNode
+		var parentAgentID sql.NullString
+		var endTime sql.NullString
+		var spawnTimeStr, statusStr string
+
+		err := rows.Scan(
+			&node.ID, &node.SessionID, &parentAgentID, &node.AgentID,
+			&node.FirstMessageUUID, &node.LastMessageUUID, &node.MessageCount,
+			&spawnTimeStr, &endTime, &statusStr, &node.IsSidechain,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		if parentAgentID.Valid {
+			node.ParentAgentID = &parentAgentID.String
+		}
+		node.SpawnTime, _ = time.Parse(time.RFC3339, spawnTimeStr)
+		if endTime.Valid {
+			t, _ := time.Parse(time.RFC3339, endTime.String)
+			node.EndTime = &t
+		}
+		node.Status = statusStr
+
+		nodes[node.AgentID] = &node
+		allNodes = append(allNodes, &node)
+	}
+
+	if len(allNodes) == 0 {
+		return nil, nil // No agents found for session
+	}
+
+	// Build hierarchy tree
+	hierarchy := buildHierarchy(allNodes)
+	maxDepth := calculateMaxDepth(hierarchy)
+
+	return &model.SubagentGraphResponse{
+		SessionID:   sessionID,
+		Hierarchy:   hierarchy,
+		TotalAgents: len(allNodes),
+		MaxDepth:    maxDepth,
+	}, nil
+}
+
+// Helper to build tree from flat list
+func buildHierarchy(nodes []*model.SubagentGraphNode) *model.SubagentHierarchy {
+	nodeMap := make(map[string]*model.SubagentHierarchy)
+	var roots []*model.SubagentHierarchy
+
+	// Create hierarchy nodes
+	for _, node := range nodes {
+		nodeMap[node.AgentID] = &model.SubagentHierarchy{Node: node}
+	}
+
+	// Link parents to children
+	for _, node := range nodes {
+		h := nodeMap[node.AgentID]
+		if node.ParentAgentID == nil {
+			roots = append(roots, h)
+		} else if parent, ok := nodeMap[*node.ParentAgentID]; ok {
+			parent.Children = append(parent.Children, h)
+		} else {
+			// Parent not found, treat as root
+			roots = append(roots, h)
+		}
+	}
+
+	if len(roots) == 1 {
+		return roots[0]
+	}
+	// Multiple roots - wrap in virtual root
+	return &model.SubagentHierarchy{
+		Node:     nil,
+		Children: roots,
+	}
+}
+
+func calculateMaxDepth(h *model.SubagentHierarchy) int {
+	if h == nil {
+		return 0
+	}
+	maxChildDepth := 0
+	for _, child := range h.Children {
+		d := calculateMaxDepth(child)
+		if d > maxChildDepth {
+			maxChildDepth = d
+		}
+	}
+	if h.Node == nil {
+		return maxChildDepth // Virtual root doesn't count
+	}
+	return maxChildDepth + 1
+}
+
+// GetSubagentGraphStats returns aggregate metrics
+func (s *SQLiteStorageService) GetSubagentGraphStats() (*model.SubagentGraphStats, error) {
+	var stats model.SubagentGraphStats
+
+	// Total sessions with agents
+	s.db.QueryRow("SELECT COUNT(DISTINCT session_id) FROM subagent_graph").Scan(&stats.TotalSessions)
+
+	// Total agents
+	s.db.QueryRow("SELECT COUNT(*) FROM subagent_graph").Scan(&stats.TotalAgents)
+
+	// Root agents (no parent)
+	s.db.QueryRow("SELECT COUNT(*) FROM subagent_graph WHERE parent_agent_id IS NULL").Scan(&stats.TotalRootAgents)
+
+	// Sidechain agents
+	s.db.QueryRow("SELECT COUNT(*) FROM subagent_graph WHERE is_sidechain = 1").Scan(&stats.TotalSidechains)
+
+	// Average agents per session
+	if stats.TotalSessions > 0 {
+		stats.AvgAgentsPerSession = float64(stats.TotalAgents) / float64(stats.TotalSessions)
+	}
+
+	// Max depth: For flat hierarchy (all parent_agent_id = NULL), depth is 1
+	// This represents: root session (depth 0) -> subagents (depth 1)
+	// If we later support nested subagents, this would need to calculate actual tree depth
+	if stats.TotalAgents > 0 {
+		stats.MaxDepth = 1
+	} else {
+		stats.MaxDepth = 0
+	}
+
+	return &stats, nil
+}
+
+// GetSubagentGraphAgent returns a single agent node
+func (s *SQLiteStorageService) GetSubagentGraphAgent(sessionID, agentID string) (*model.SubagentGraphNode, error) {
+	query := `
+		SELECT id, session_id, parent_agent_id, agent_id,
+		       first_message_uuid, last_message_uuid, message_count,
+		       spawn_time, end_time, status, is_sidechain
+		FROM subagent_graph
+		WHERE session_id = ? AND agent_id = ?
+	`
+
+	var node model.SubagentGraphNode
+	var parentAgentID, endTime sql.NullString
+	var spawnTimeStr string
+
+	err := s.db.QueryRow(query, sessionID, agentID).Scan(
+		&node.ID, &node.SessionID, &parentAgentID, &node.AgentID,
+		&node.FirstMessageUUID, &node.LastMessageUUID, &node.MessageCount,
+		&spawnTimeStr, &endTime, &node.Status, &node.IsSidechain,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil // Not found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query subagent graph agent: %w", err)
+	}
+
+	if parentAgentID.Valid {
+		node.ParentAgentID = &parentAgentID.String
+	}
+	node.SpawnTime, _ = time.Parse(time.RFC3339, spawnTimeStr)
+	if endTime.Valid {
+		t, _ := time.Parse(time.RFC3339, endTime.String)
+		node.EndTime = &t
+	}
+
+	return &node, nil
+}
+// GetPlugins returns all installed plugins with component counts from database
+func (s *SQLiteStorageService) GetPlugins() ([]model.Plugin, error) {
+	// Read installed_plugins.json
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	installedPluginsPath := filepath.Join(homeDir, ".claude", "plugins", "installed_plugins.json")
+	data, err := os.ReadFile(installedPluginsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []model.Plugin{}, nil
+		}
+		return nil, fmt.Errorf("failed to read installed_plugins.json: %w", err)
+	}
+
+	var installedPlugins struct {
+		Version int                                   `json:"version"`
+		Plugins map[string][]map[string]interface{} `json:"plugins"`
+	}
+
+	if err := json.Unmarshal(data, &installedPlugins); err != nil {
+		return nil, fmt.Errorf("failed to parse installed_plugins.json: %w", err)
+	}
+
+	var plugins []model.Plugin
+	for pluginKey, installations := range installedPlugins.Plugins {
+		if len(installations) == 0 {
+			continue
+		}
+
+		// Use the first installation (most recent)
+		installation := installations[0]
+
+		// Parse pluginKey as "plugin@marketplace"
+		parts := strings.Split(pluginKey, "@")
+		if len(parts) != 2 {
+			continue
+		}
+		pluginName := parts[0]
+		marketplace := parts[1]
+
+		// Get component counts from database
+		counts, err := s.getComponentCounts(pluginKey)
+		if err != nil {
+			log.Printf("Warning: failed to get component counts for %s: %v", pluginKey, err)
+			counts = model.ComponentCounts{}
+		}
+
+		plugin := model.Plugin{
+			ID:              pluginKey,
+			Name:            pluginName,
+			Marketplace:     marketplace,
+			Version:         getStringField(installation, "version"),
+			InstallPath:     getStringField(installation, "installPath"),
+			ComponentCounts: counts,
+		}
+
+		plugins = append(plugins, plugin)
+	}
+
+	return plugins, nil
+}
+
+// GetPlugin returns a single plugin by ID
+func (s *SQLiteStorageService) GetPlugin(pluginID string) (*model.Plugin, error) {
+	plugins, err := s.GetPlugins()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, p := range plugins {
+		if p.ID == pluginID {
+			return &p, nil
+		}
+	}
+
+	return nil, fmt.Errorf("plugin not found: %s", pluginID)
+}
+
+// GetMarketplaces returns all known marketplaces with plugin counts
+func (s *SQLiteStorageService) GetMarketplaces() ([]model.Marketplace, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	knownMarketplacesPath := filepath.Join(homeDir, ".claude", "plugins", "known_marketplaces.json")
+	data, err := os.ReadFile(knownMarketplacesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []model.Marketplace{}, nil
+		}
+		return nil, fmt.Errorf("failed to read known_marketplaces.json: %w", err)
+	}
+
+	var knownMarketplaces map[string]map[string]interface{}
+	if err := json.Unmarshal(data, &knownMarketplaces); err != nil {
+		return nil, fmt.Errorf("failed to parse known_marketplaces.json: %w", err)
+	}
+
+	// Get all plugins to count per marketplace
+	plugins, err := s.GetPlugins()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get plugins: %w", err)
+	}
+
+	pluginsByMarketplace := make(map[string][]model.Plugin)
+	for _, p := range plugins {
+		pluginsByMarketplace[p.Marketplace] = append(pluginsByMarketplace[p.Marketplace], p)
+	}
+
+	var marketplaces []model.Marketplace
+	for marketplaceID, marketplaceData := range knownMarketplaces {
+		sourceType := "unknown"
+		sourceURL := ""
+
+		if source, ok := marketplaceData["source"].(map[string]interface{}); ok {
+			if st, ok := source["source"].(string); ok {
+				sourceType = st
+			}
+			if url, ok := source["url"].(string); ok {
+				sourceURL = url
+			}
+		}
+
+		marketplace := model.Marketplace{
+			ID:          marketplaceID,
+			Name:        marketplaceID,
+			SourceType:  sourceType,
+			SourceURL:   sourceURL,
+			LastUpdated: getStringField(marketplaceData, "lastUpdated"),
+			AutoUpdate:  getBoolField(marketplaceData, "autoUpdate"),
+			PluginCount: len(pluginsByMarketplace[marketplaceID]),
+			Plugins:     pluginsByMarketplace[marketplaceID],
+		}
+
+		marketplaces = append(marketplaces, marketplace)
+	}
+
+	return marketplaces, nil
+}
+
+// getComponentCounts queries the database for extension counts by source
+func (s *SQLiteStorageService) getComponentCounts(pluginSource string) (model.ComponentCounts, error) {
+	query := `SELECT type, COUNT(*) FROM extensions WHERE source = ? GROUP BY type`
+	rows, err := s.db.Query(query, pluginSource)
+	if err != nil {
+		return model.ComponentCounts{}, err
+	}
+	defer rows.Close()
+
+	counts := model.ComponentCounts{}
+	for rows.Next() {
+		var extType string
+		var count int
+		if err := rows.Scan(&extType, &count); err != nil {
+			return counts, err
+		}
+
+		switch extType {
+		case "agent":
+			counts.Agents = count
+		case "command":
+			counts.Commands = count
+		case "skill":
+			counts.Skills = count
+		case "hook":
+			counts.Hooks = count
+		case "mcp":
+			counts.MCP = count
+		}
+	}
+
+	return counts, nil
+}
+
+// Helper functions for JSON field extraction
+func getStringField(m map[string]interface{}, key string) string {
+	if val, ok := m[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
+func getBoolField(m map[string]interface{}, key string) bool {
+	if val, ok := m[key].(bool); ok {
+		return val
+	}
+	return false
+}
+
+// ============================================================================
+// Session Management
+// ============================================================================
+
+// GetSessions returns a paginated list of sessions ordered by started_at descending
+func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session, error) {
+	query := `
+		SELECT id, project_path, started_at, ended_at,
+		       conversation_count, message_count, agent_count, todo_count, created_at
+		FROM sessions
+		ORDER BY started_at DESC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := s.db.Query(query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []*model.Session
+	for rows.Next() {
+		var session model.Session
+		var projectPath, startedAt, endedAt sql.NullString
+
+		err := rows.Scan(
+			&session.ID,
+			&projectPath,
+			&startedAt,
+			&endedAt,
+			&session.ConversationCount,
+			&session.MessageCount,
+			&session.AgentCount,
+			&session.TodoCount,
+			&session.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session row: %w", err)
+		}
+
+		if projectPath.Valid {
+			session.ProjectPath = projectPath.String
+		}
+
+		if startedAt.Valid {
+			t, err := time.Parse(time.RFC3339, startedAt.String)
+			if err == nil {
+				session.StartedAt = &t
+			}
+		}
+
+		if endedAt.Valid {
+			t, err := time.Parse(time.RFC3339, endedAt.String)
+			if err == nil {
+				session.EndedAt = &t
+			}
+		}
+
+		sessions = append(sessions, &session)
+	}
+
+	return sessions, nil
+}
+
+// GetSession returns a single session by ID
+func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, error) {
+	query := `
+		SELECT id, project_path, started_at, ended_at,
+		       conversation_count, message_count, agent_count, todo_count, created_at
+		FROM sessions
+		WHERE id = ?
+	`
+
+	var session model.Session
+	var projectPath, startedAt, endedAt sql.NullString
+
+	err := s.db.QueryRow(query, sessionID).Scan(
+		&session.ID,
+		&projectPath,
+		&startedAt,
+		&endedAt,
+		&session.ConversationCount,
+		&session.MessageCount,
+		&session.AgentCount,
+		&session.TodoCount,
+		&session.CreatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query session: %w", err)
+	}
+
+	if projectPath.Valid {
+		session.ProjectPath = projectPath.String
+	}
+
+	if startedAt.Valid {
+		t, err := time.Parse(time.RFC3339, startedAt.String)
+		if err == nil {
+			session.StartedAt = &t
+		}
+	}
+
+	if endedAt.Valid {
+		t, err := time.Parse(time.RFC3339, endedAt.String)
+		if err == nil {
+			session.EndedAt = &t
+		}
+	}
+
+	return &session, nil
+}
+
+// GetSessionStats returns aggregate statistics about all sessions
+func (s *SQLiteStorageService) GetSessionStats() (*model.SessionStats, error) {
+	query := `
+		SELECT
+			COUNT(*) as total_sessions,
+			SUM(CASE WHEN ended_at > datetime('now', '-24 hours') THEN 1 ELSE 0 END) as active_sessions,
+			SUM(message_count) as total_messages,
+			COUNT(DISTINCT project_path) as unique_projects
+		FROM sessions
+	`
+
+	var stats model.SessionStats
+	var activeSessions, totalMessages, uniqueProjects sql.NullInt64
+
+	err := s.db.QueryRow(query).Scan(
+		&stats.TotalSessions,
+		&activeSessions,
+		&totalMessages,
+		&uniqueProjects,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to query session stats: %w", err)
+	}
+
+	if activeSessions.Valid {
+		stats.ActiveSessions = int(activeSessions.Int64)
+	}
+	if totalMessages.Valid {
+		stats.TotalMessages = int(totalMessages.Int64)
+	}
+	if uniqueProjects.Valid {
+		stats.UniqueProjects = int(uniqueProjects.Int64)
+	}
+
+	return &stats, nil
+}
+// GetSessionConversations returns conversations for a session
+func (s *SQLiteStorageService) GetSessionConversations(sessionID string) ([]*model.IndexedConversation, error) {
+	linker := NewRelationshipLinker(s)
+	return linker.GetSessionConversations(sessionID)
+}
+
+// GetConversationSessions returns sessions that included a conversation
+func (s *SQLiteStorageService) GetConversationSessions(conversationID string) ([]*model.Session, error) {
+	linker := NewRelationshipLinker(s)
+	return linker.GetConversationSessions(conversationID)
+}
+
+// GetSessionFileChanges returns file changes for a session
+func (s *SQLiteStorageService) GetSessionFileChanges(sessionID string) ([]*model.SessionFileChange, error) {
+	linker := NewRelationshipLinker(s)
+	return linker.GetSessionFileChanges(sessionID)
+}
+
+// GetFileChangeSessions returns sessions that modified a file (prefix match)
+func (s *SQLiteStorageService) GetFileChangeSessions(filePath string) ([]*model.Session, error) {
+	linker := NewRelationshipLinker(s)
+	return linker.GetFileChangeSessions(filePath)
+}
+
+// SaveFileChange saves a file change to the database
+func (s *SQLiteStorageService) SaveFileChange(change *model.SessionFileChange) error {
+	linker := NewRelationshipLinker(s)
+	return linker.saveFileChange(change)
+}

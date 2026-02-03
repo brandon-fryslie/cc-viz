@@ -1,0 +1,101 @@
+package service
+
+import (
+	"time"
+
+	"github.com/brandon-fryslie/cc-viz/internal/config"
+	"github.com/brandon-fryslie/cc-viz/internal/model"
+)
+
+type StorageService interface {
+	SaveRequest(request *model.RequestLog) (string, error)
+	GetRequests(page, limit int) ([]model.RequestLog, int, error)
+	ClearRequests() (int, error)
+	UpdateRequestWithGrading(requestID string, grade *model.PromptGrade) error
+	UpdateRequestWithResponse(request *model.RequestLog) error
+	EnsureDirectoryExists() error
+	GetRequestByShortID(shortID string) (*model.RequestLog, string, error)
+	GetConfig() *config.StorageConfig
+	GetAllRequests(modelFilter string) ([]*model.RequestLog, error)
+	GetRequestsSummary(modelFilter string) ([]*model.RequestSummary, error)
+	GetRequestsSummaryPaginated(modelFilter, startTime, endTime string, offset, limit int) ([]*model.RequestSummary, int, error)
+	GetStats(startDate, endDate string) (*model.DashboardStats, error)
+	GetHourlyStats(startTime, endTime string) (*model.HourlyStatsResponse, error)
+	GetModelStats(startTime, endTime string) (*model.ModelStatsResponse, error)
+	GetLatestRequestDate() (*time.Time, error)
+	Close() error
+
+	// New analytics endpoints
+	GetProviderStats(startTime, endTime string) (*model.ProviderStatsResponse, error)
+	GetSubagentStats(startTime, endTime string) (*model.SubagentStatsResponse, error)
+	GetToolStats(startTime, endTime string) (*model.ToolStatsResponse, error)
+	GetPerformanceStats(startTime, endTime string) (*model.PerformanceStatsResponse, error)
+
+	// Conversation search
+	SearchConversations(opts model.SearchOptions) (*model.SearchResults, error)
+	SearchRequests(query string, modelFilter string, limit, offset int) (*model.RequestSearchResults, error)
+	SearchExtensions(query string, extType, source string, limit, offset int) ([]*model.Extension, int, error)
+	SearchTodos(query, status string, limit, offset int) ([]*model.Todo, int, error)
+	SearchPlans(query, status string, limit, offset int) ([]*model.Plan, int, error)
+	SearchUnified(query string, dataTypes []string, limit, offset int) (*model.UnifiedSearchResults, error)
+
+	// Indexed conversations - fast database lookup
+	GetIndexedConversations(limit int) ([]*model.IndexedConversation, error)
+
+	// GetConversationFilePath returns the file path and project path for a conversation by ID
+	GetConversationFilePath(conversationID string) (filePath string, projectPath string, err error)
+
+	// GetConversationMessages returns messages for a conversation from the database
+	GetConversationMessages(conversationID string, limit, offset int) ([]*model.DBConversationMessage, int, error)
+
+	// GetConversationMessagesWithSubagents returns messages including subagent messages merged by timestamp
+	GetConversationMessagesWithSubagents(conversationID string, limit, offset int) ([]*model.DBConversationMessage, int, error)
+
+	// ReindexConversations triggers a full re-index of all conversations
+	ReindexConversations() error
+
+	// Extension management (updated for Extensions Hub)
+	GetExtensionsFiltered(extType, source, search string) ([]*model.Extension, error)
+	GetExtensions(extType string) ([]*model.Extension, error) // Legacy - kept for compatibility
+	GetExtension(extType, id string) (*model.Extension, error)
+	UpdateExtensionEnabled(id string, enabled bool) error
+	GetExtensionStats() (*model.ExtensionStatsResponse, error)
+	SaveExtension(ext *model.Extension) error
+	DeleteExtension(id string) error
+
+	// Plugin and Marketplace management
+	GetPlugins() ([]model.Plugin, error)
+	GetPlugin(pluginID string) (*model.Plugin, error)
+	GetMarketplaces() ([]model.Marketplace, error)
+
+	// Subagent graph methods
+	GetSubagentHierarchy(sessionID string) (*model.SubagentGraphResponse, error)
+	GetSubagentGraphStats() (*model.SubagentGraphStats, error)
+	GetSubagentGraphAgent(sessionID, agentID string) (*model.SubagentGraphNode, error)
+
+	// Session management
+	GetSessions(limit, offset int) ([]*model.Session, error)
+	GetSession(sessionID string) (*model.Session, error)
+	GetSessionStats() (*model.SessionStats, error)
+
+	// Relationship mapping - Session-Conversation relationships
+	GetSessionConversations(sessionID string) ([]*model.IndexedConversation, error)
+	GetConversationSessions(conversationID string) ([]*model.Session, error)
+
+	// Relationship mapping - Session-File relationships
+	GetSessionFileChanges(sessionID string) ([]*model.SessionFileChange, error)
+	GetFileChangeSessions(filePath string) ([]*model.Session, error)
+	SaveFileChange(change *model.SessionFileChange) error
+
+	// Relationship mapping - Plan-Session relationships
+	GetPlanSessions(planID int) ([]*model.Session, error)
+	GetSessionPlans(sessionID string) ([]*model.Plan, error)
+	LinkPlanToSession(planID int, sessionID string, relationship string, confidence string) error
+
+	// Todos - for session detail
+	GetTodosBySession(sessionID string) ([]*model.Todo, error)
+
+	// Plans - get all plans
+	GetAllPlans() ([]*model.Plan, error)
+	GetAllSessionIDs() ([]string, error)
+}

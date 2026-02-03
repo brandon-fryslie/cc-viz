@@ -1,0 +1,22 @@
+# CC-Viz Configuration
+
+server:
+  port: 8002
+  timeouts:
+    read: "30s"
+    write: "60s"
+    idle: "90s"
+
+# Queue configuration (reads files written by cc-proxy)
+queue:
+  directory: "./queue"
+  dead_letter_directory: "./queue/dead-letter"
+
+# Storage configuration
+storage:
+  db_path: "./requests.db"
+
+# Claude Code paths (for conversation/extension discovery)
+claude:
+  projects_dir: "${HOME}/.claude/projects"
+  extensions_dir: "${HOME}/.claude"
