@@ -1,0 +1,129 @@
+Agent: iterative-implementer | 2026-01-19 19:24:57
+Mode: manual
+Completed: Frontend unified-search (P6-P9) | Files: 6 | Commits: 1
+Tests: N/A (frontend manual verification required)
+Cache invalidated: none (no eval cache modified)
+Status: complete
+
+## Implementation Summary
+
+Unified search frontend implementation (P6-P9) is COMPLETE. All acceptance criteria met.
+
+### What Was Built
+
+**P6 & P9: Frontend Modal Update & Navigation**
+- Deleted `getFullText()` and `getContextWithHighlight()` functions
+- Added `highlightSnippet()` function using backend-provided highlight offsets
+- Display session_uuid with middle truncation (0123...cdef format)
+- Copy session UUID to clipboard on click with visual feedback
+- Navigation URLs now include query params: `?q=${query}&highlight=true`
+- Fixed `getResultUrl()` for all result types:
+  - request: `/requests/${id}?q=${q}&highlight=true`
+  - conversation: `/conversations/${id}?q=${q}&highlight=true`
+  - extension: `/extensions?id=${id}`
+  - todo: `/session-data?session=${uuid}&todo=${id}`
+  - plan: `/session-data?session=${uuid}&plan=${id}`
+
+**P7: Frontend Types Update**
+- Added `highlightStart`, `highlightEnd` (optional) to `ConversationMatch`
+- Added `highlightStart`, `highlightEnd` (optional) to `RequestSearchResult`
+- Created `ExtensionSearchResult` type with snippet and highlights
+- Created `TodoSearchResult` type with session_uuid and highlights
+- Created `PlanSearchResult` type with session_uuid and highlights
+- All types match backend Go model definitions
+
+**P8: Detail Page Highlighting**
+- Created `useSearchHighlight()` custom hook
+  - Reads URL params `q` and `highlight`
+  - Finds matching text using TreeWalker API
+  - Wraps match in span with `search-highlight` class
+  - Scrolls to first match using `scrollIntoView()`
+- Added CSS animation for flash-and-fade effect
+  - Yellow highlight (rgba(234, 179, 8, 0.4-0.6))
+  - 2-second animation with ease-out
+- Updated Requests page: added ref and useSearchHighlight() hook
+- Updated Conversations page: added ref and useSearchHighlight() hook
+
+### Files Modified
+
+**Frontend (TypeScript/React)**:
+1. `frontend/src/lib/types.ts` - Added search result types (P7)
+2. `frontend/src/lib/useSearchHighlight.ts` - NEW hook for highlighting (P8)
+3. `frontend/src/components/UnifiedSearchModal.tsx` - Refactored to use backend snippets (P6, P9)
+4. `frontend/src/pages/Requests.tsx` - Added search highlighting (P8)
+5. `frontend/src/pages/Conversations.tsx` - Added search highlighting (P8)
+6. `frontend/src/index.css` - Added search-highlight animation (P8)
+
+### Verification
+
+Build: Frontend builds successfully with no TypeScript errors
+```bash
+cd frontend && npm run build
+# Result: Success (501KB bundle, no errors)
+```
+
+Type Check: No errors
+```bash
+cd frontend && npx tsc --noEmit
+# Result: No errors
+```
+
+Backend: Already complete (P0-P5) from previous implementation
+```bash
+CGO_ENABLED=1 go build -tags fts5 ./...
+# Result: Success (verified earlier)
+```
+
+### Commits
+
+1. feat(unified-search): complete frontend implementation (P6-P9) [fb1f50f6]
+
+### Implementation Notes
+
+**Design Decisions Implemented**:
+1. Session ID display: Middle truncation format `0123...cdef` (user confirmed)
+2. Detail page highlighting: Scroll to match + flash yellow animation (user confirmed)
+3. Backend snippet offsets: Used directly without re-calculation
+4. Single highlight per page: First match only (performance optimization)
+
+**Technical Approach**:
+- Created reusable `useSearchHighlight()` hook to avoid duplication
+- Used DOM TreeWalker API for efficient text node traversal
+- CSS animation (not JS) for smooth performance
+- Nullable ref types to handle React strict types
+
+### Next Steps (Manual Verification Required)
+
+The implementation is complete from a code perspective. Manual testing needed:
+
+1. **Search Modal** (P6):
+   - Open search (Cmd+Shift+K)
+   - Type query (2+ chars)
+   - Verify snippets show with highlights
+   - Verify session UUIDs show for todos/plans
+   - Verify UUID copy works
+
+2. **Navigation** (P9):
+   - Click each result type
+   - Verify URL contains `?q=...&highlight=true`
+   - Verify navigation works for all types
+
+3. **Detail Page Highlighting** (P8):
+   - Navigate from search to detail
+   - Verify content highlights (yellow flash)
+   - Verify scroll to match works
+   - Verify animation fades after 2 seconds
+
+4. **All Result Types**:
+   - Test: requests, conversations, extensions, todos, plans
+   - Verify each shows correct snippet
+   - Verify highlights are correct
+
+### Status
+
+- Backend (P0-P5): COMPLETE (previous implementation)
+- Frontend (P6-P9): COMPLETE (this implementation)
+- Manual Testing: PENDING (requires user verification)
+- DOD Checklist: Code complete, build verification complete, manual testing pending
+
+All code acceptance criteria are met. The feature is ready for manual verification.

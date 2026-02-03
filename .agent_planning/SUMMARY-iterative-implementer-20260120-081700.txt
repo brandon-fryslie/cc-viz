@@ -1,0 +1,26 @@
+Agent: iterative-implementer | 2026-01-20 08:17:00
+Mode: manual (no tests exist for this feature)
+Completed:
+  - Updated Conversation interface with totalTokens, inputTokens, outputTokens fields
+  - Added new types: ConversationTokenSummary, TokenBreakdown, ProjectTokenStat, ConversationTokenBreakdown, ProjectTokenStatsResponse
+  - Added useConversationTokenSummary() hook for fetching single conversation token data
+  - Added useProjectTokenStats() hook for fetching project-level token statistics
+  - Created ErrorBoundary React class component with fallback UI and retry button
+  - Updated TokenEconomics page to:
+    - Remove all messageCount * 1000 token estimates
+    - Use actual conv.totalTokens from API
+    - Use useProjectTokenStats() for project breakdown
+    - Add validateMetrics() function for data quality warnings
+    - Add ErrorAlert component for API failures
+    - Add DataQualityWarning component for validation warnings
+    - Wrap page with ErrorBoundary for crash protection
+
+Files Modified (4):
+  - frontend/src/lib/types.ts (Conversation + new token types)
+  - frontend/src/lib/api.ts (useConversationTokenSummary, useProjectTokenStats hooks)
+  - frontend/src/components/ui/ErrorBoundary.tsx (new component)
+  - frontend/src/pages/TokenEconomics.tsx (removed estimates, added validation + error handling)
+
+Tests: N/A (manual validation mode)
+Status: complete
+Build: PASSED (npm run build completed successfully)

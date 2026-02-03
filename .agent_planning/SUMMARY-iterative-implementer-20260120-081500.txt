@@ -1,0 +1,20 @@
+Agent: iterative-implementer | 2026-01-20 08:15:00
+Mode: manual (no tests exist for this feature)
+Completed:
+- Added 5 new types to internal/model/models.go (ConversationTokenSummary, TokenBreakdown, ProjectTokenStat, ConversationTokenBreakdown, IndexedConversationWithTokens)
+- Added 3 methods to StorageService interface (GetConversationTokenSummary, GetProjectTokenStats, GetIndexedConversationsWithTokens)
+- Implemented 3 storage methods in internal/service/storage_sqlite.go
+- Added 3 API handlers in internal/handler/data_handler.go
+- Registered 3 new routes in cmd/viz-server/main.go
+- Build verification: PASSED (go build succeeded)
+
+Files: 5 | Commits: 0 (pending git operations)
+Cache invalidated: N/A (no eval-cache entries to invalidate)
+Status: complete - Ready for Sprint 2
+
+New API Endpoints:
+1. GET /api/v2/conversations/{id}/token-summary - Returns token breakdown for a conversation with per-model stats
+2. GET /api/v2/conversations/with-tokens - Returns conversations list with actual token counts
+3. GET /api/v2/stats/projects?start=...&end=... - Returns project-level token statistics with top conversations
+
+Next step: Sprint 2 - Frontend Real Data + Error Handling

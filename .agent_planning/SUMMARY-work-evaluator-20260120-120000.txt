@@ -1,0 +1,7 @@
+Agent: work-evaluator | 2026-01-20 12:00:00
+Scope: work/token-economics/backend-data
+Verdict: INCOMPLETE
+Criteria: 2/4 working | Breaks found: 1 critical | Ambiguities: 2
+Previous: N/A (first evaluation)
+Missing checks: 2 specified (schema validation, integration tests)
+Cache: No updates needed (issues are implementation bugs, not runtime findings)

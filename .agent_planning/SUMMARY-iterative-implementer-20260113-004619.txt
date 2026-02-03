@@ -1,0 +1,21 @@
+Agent: iterative-implementer | 2026-01-13-00:45:30
+Mode: tdd
+Completed: P1 integration tests with real data | Files: 2 | Commits: 1
+Tests: 24+ passing (including 3 new P1 tests), 0 failing
+Cache invalidated: none (no eval cache for this work)
+Status: complete
+
+Details:
+- Added TestIndexerWithRealData: indexes 10+ real JSONL files, verifies database population
+- Added TestSearchIndexedConversations: tests message retrieval from indexed data
+- Added TestFileWatcherDetectsChanges: verifies file watcher functionality
+- Fixed bug: Skip messages without UUIDs (metadata messages) during indexing
+- All P1 acceptance criteria met:
+  ✅ Integration test indexes 10+ real JSONL files (indexed 102 files)
+  ✅ Indexed messages appear in database (9,363 messages indexed)
+  ✅ Messages have content and metadata (9,145 with content)
+  ✅ File watcher detects modifications and re-indexes
+  ✅ Test cleanup ensures no artifacts left
+  ✅ All tests pass with both conditional and full schemas
+
+Next: P2 - Verify Performance at Scale (index all 3,927+ files)

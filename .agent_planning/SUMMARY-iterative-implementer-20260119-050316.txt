@@ -1,0 +1,59 @@
+Agent: iterative-implementer | 2026-01-19
+Mode: manual
+Completed: Sessions foundation (schema, migration, storage, API) | Files: 4 | Commits: 4
+Tests: All passing, no failing
+Cache invalidated: None (no cache exists)
+Status: complete
+
+=== Implementation Summary ===
+
+Sprint: sessions-foundation
+All acceptance criteria from DoD verified and passing.
+
+Implemented:
+1. Session model structs (Session, SessionStats) in internal/model/models.go
+2. Storage interface methods (GetSessions, GetSession, GetSessionStats)
+3. Sessions table schema with indexes (id, project_path, started_at)
+4. Migration from conversation_messages (290 sessions migrated from real data)
+5. SQLite storage implementation with RFC3339 timestamp parsing
+6. API handlers (GetSessionsV2, GetSessionDetailV2, GetSessionStatsV2)
+7. Route registration in main.go (/stats before /{id} to avoid conflicts)
+
+Verified Working:
+- GET /api/v2/claude/sessions (200, paginated list)
+- GET /api/v2/claude/sessions?limit=5 (returns exactly 5)
+- GET /api/v2/claude/sessions?offset=10 (skips first 10)
+- GET /api/v2/claude/sessions/stats (200, aggregate stats)
+- GET /api/v2/claude/sessions/{invalid-id} (404)
+- GET /api/v2/claude/sessions/{valid-id} (200, session detail)
+
+Schema verified:
+- Primary key on id
+- Indexes on project_path and started_at
+- All columns present with correct types
+- Migration is idempotent (INSERT OR IGNORE)
+- All sessions have non-null timestamps
+
+Migration stats:
+- 290 sessions migrated from 78,057 messages
+- 495 distinct session_ids (some orphaned without conversations)
+- All timestamps in ISO 8601 (RFC3339) format
+
+Build: CGO_ENABLED=1 go build -tags fts5 ./cmd/viz-server/
+Tests: CGO_ENABLED=1 go test -tags fts5 ./... (all passing)
+
+Files modified:
+- internal/model/models.go (added Session, SessionStats)
+- internal/service/storage.go (added interface methods)
+- internal/service/storage_sqlite.go (added migration, storage methods)
+- internal/handler/data_handler.go (added API handlers)
+- cmd/viz-server/main.go (added route registration)
+
+Commits:
+1. chore: initial commit with session model structs
+2. feat(sessions): add sessions table schema, migration, and storage methods
+3. feat(sessions): add session API handlers and route registration
+4. fix(sessions): use RFC3339 timestamp parsing for SQLite datetime fields
+5. chore: remove accidentally added duplicate SearchRequests method
+
+Ready for evaluation: YES

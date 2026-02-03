@@ -1,0 +1,41 @@
+Agent: iterative-implementer | 2026-01-19T05:42:28Z
+Mode: manual (no tests exist for this feature)
+Completed: 8 work items | Files: 6 modified | Commits: 8
+Status: complete
+
+Work Items Completed:
+1. Added Plan, PlanSessionMap, and Todo models to models.go
+2. Created plan_session_map table and added session_uuid to claude_plans
+3. Updated StorageService interface with new methods
+4. Implemented storage methods in storage_sqlite.go
+5. Extended RelationshipLinker with plan UUID extraction
+6. Added API handlers: GetSessionPlansV2, GetPlanSessionsV2
+7. Extended GetSessionDetailV2 to include plans, todos, subagents
+8. Registered routes and triggered plan linking on startup
+
+Files Modified:
+- internal/model/models.go (37 lines added)
+- internal/service/storage_sqlite.go (265 lines added)
+- internal/service/storage.go (12 lines added)
+- internal/service/relationship_linker.go (60 lines added)
+- internal/handler/data_handler.go (84 lines added)
+- cmd/viz-server/main.go (13 lines added)
+
+Validation:
+- All Go tests pass: ok github.com/brandon-fryslie/cc-viz/internal/service 9.928s
+- Binary builds successfully: viz-server (14M)
+- Code compiles with CGO_ENABLED=1 -tags fts5
+- golangci-lint check not run (not available in environment)
+
+API Endpoints Ready:
+- GET /api/v2/claude/sessions/{id} - now includes plans, todos, subagents
+- GET /api/v2/claude/sessions/{id}/plans
+- GET /api/v2/claude/plans/{id}/sessions
+
+Next Steps:
+- Start server to populate plan_session_map table
+- Verify plan-session links are created correctly
+- Test bidirectional navigation APIs
+- Verify session detail completeness
+
+Cache invalidated: None (no cache entries exist yet)

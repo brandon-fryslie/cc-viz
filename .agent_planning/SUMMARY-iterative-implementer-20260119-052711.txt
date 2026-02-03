@@ -1,0 +1,99 @@
+Agent: iterative-implementer | 2026-01-19 05:26:00
+Mode: manual
+Completed: Sprint 2 relationship-maps | Files: 5 | Commits: 8
+Tests: passing
+Cache invalidated: none (no eval cache exists yet)
+Status: complete
+
+## Implementation Summary
+
+Sprint 2 (relationship-maps) is COMPLETE. All acceptance criteria met.
+
+### What Was Built
+
+1. **Database Tables** ✅
+   - session_conversation_map: 1,647 relationships tracked
+   - session_file_changes: 62,091 file modifications tracked
+   - Both tables have proper foreign keys, indexes, and UNIQUE constraints
+
+2. **RelationshipLinker Service** ✅  
+   - Parses Anthropic API responses from conversation_messages.content_json
+   - Extracts file paths from Write, Edit, and Bash tool_use blocks
+   - Populates session_file_changes on startup
+   - Distribution: 23,836 edits, 23,301 bash ops, 14,954 writes
+
+3. **Storage Interface** ✅
+   - GetSessionConversations(sessionID) - session→conversations lookup
+   - GetConversationSessions(conversationID) - conversation→sessions lookup  
+   - GetSessionFileChanges(sessionID) - session→files lookup
+   - GetFileChangeSessions(filePath) - file→sessions lookup with prefix matching
+   - SaveFileChange(change) - insert file change record
+
+4. **API Endpoints** ✅
+   - GET /api/v2/claude/sessions/{id}/conversations
+   - GET /api/v2/claude/sessions/{id}/files
+   - GET /api/v2/claude/conversations/{id}/sessions
+   - GET /api/v2/claude/files?path=/prefix
+   - Extended GET /api/v2/claude/sessions/{id} to include conversations[] and files[]
+
+5. **Main.go Wiring** ✅
+   - Routes registered (specific before generic for mux)
+   - RelationshipLinker initialized on startup
+   - File extraction runs automatically
+
+### Verification
+
+Schema:
+```sql
+CREATE TABLE session_conversation_map (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    first_message_uuid TEXT,
+    last_message_uuid TEXT,
+    message_count INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, conversation_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE session_file_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    change_type TEXT,
+    tool_name TEXT,
+    message_uuid TEXT,
+    timestamp DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+```
+
+Data population:
+- session_conversation_map: 1,647 rows ✅
+- session_file_changes: 62,091 rows ✅
+- File change types: edit (23,836), bash (23,301), write (14,954) ✅
+
+Tests: All passing ✅
+Build: Successful ✅
+
+### Commits
+
+1. feat(model): add SessionConversationMap and SessionFileChange structs
+2. feat(storage): add relationship-maps migration
+3. feat(service): add RelationshipLinker for file change extraction
+4. feat(storage): add relationship mapping interface methods
+5. feat(handler): add relationship mapping API endpoints
+6. feat(main): wire up relationship mapping routes and linker
+7. fix(linker): parse Anthropic API response structure correctly
+8. fix(routes): reorder session routes - specific before generic
+
+### Next Steps (if needed)
+
+The implementation is complete. Bidirectional navigation is now available:
+- session → conversations → session
+- session → files → session (via file path prefix matching)
+
+All acceptance criteria from the DoD have been met.
