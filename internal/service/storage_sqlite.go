@@ -1339,6 +1339,7 @@ func (s *SQLiteStorageService) GetStats(startDate, endDate string) (*model.Dashb
 			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens
 		FROM conversation_messages
 		WHERE timestamp >= ? AND timestamp < ?
+			AND role IN ('user', 'assistant')
 		GROUP BY date, model
 		ORDER BY date
 	`
@@ -1402,6 +1403,7 @@ func (s *SQLiteStorageService) GetHourlyStats(startTime, endTime string) (*model
 			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens
 		FROM conversation_messages
 		WHERE timestamp >= ? AND timestamp < ?
+			AND role IN ('user', 'assistant')
 		GROUP BY hour, model
 		ORDER BY hour
 	`
@@ -4349,6 +4351,7 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 			COALESCE(model, 'unknown') as model
 		FROM conversation_messages
 		WHERE conversation_id = ?
+			AND role IN ('user', 'assistant')
 		GROUP BY model
 		ORDER BY total_tokens DESC
 	`
@@ -4437,6 +4440,7 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 		FROM conversation_messages cm
 		JOIN conversations c ON cm.conversation_id = c.id
 		WHERE c.start_time BETWEEN ? AND ?
+			AND cm.role IN ('user', 'assistant')
 		GROUP BY c.project_name
 		ORDER BY total_tokens DESC
 	`
@@ -4466,6 +4470,7 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 			FROM conversation_messages cm
 			JOIN conversations c ON cm.conversation_id = c.id
 			WHERE c.project_name = ?
+				AND cm.role IN ('user', 'assistant')
 			GROUP BY cm.conversation_id
 			ORDER BY total_tokens DESC
 			LIMIT 5
@@ -4505,6 +4510,7 @@ func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*
 			COALESCE(SUM(cm.output_tokens), 0) as output_tokens
 		FROM conversations c
 		LEFT JOIN conversation_messages cm ON c.id = cm.conversation_id
+			AND cm.role IN ('user', 'assistant')
 		GROUP BY c.id
 		ORDER BY c.end_time DESC
 	`
