@@ -1331,15 +1331,29 @@ func (s *SQLiteStorageService) GetStats(startDate, endDate string) (*model.Dashb
 	}
 
 	// SQL aggregation - query conversation_messages for token data
+	// Deduplicate by request_id: Claude Code writes one JSONL entry per content block
+	// in a streaming response, each carrying the same usage object. We take MAX per
+	// request_id to count tokens only once per API request.
 	query := `
 		SELECT
 			DATE(timestamp) as date,
 			COALESCE(model, 'unknown') as model,
 			COUNT(*) as requests,
 			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens
-		FROM conversation_messages
-		WHERE timestamp >= ? AND timestamp < ?
-			AND role IN ('user', 'assistant')
+		FROM (
+			SELECT
+				COALESCE(request_id, uuid) as dedup_key,
+				MIN(timestamp) as timestamp,
+				MAX(model) as model,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens
+			FROM conversation_messages
+			WHERE timestamp >= ? AND timestamp < ?
+				AND role IN ('user', 'assistant')
+			GROUP BY dedup_key
+		)
 		GROUP BY date, model
 		ORDER BY date
 	`
@@ -1394,16 +1408,27 @@ func (s *SQLiteStorageService) GetStats(startDate, endDate string) (*model.Dashb
 
 // GetHourlyStats returns hourly breakdown for a specific time range - uses SQL aggregation
 func (s *SQLiteStorageService) GetHourlyStats(startTime, endTime string) (*model.HourlyStatsResponse, error) {
-	// SQL aggregation - no JSON parsing needed
+	// Deduplicate by request_id before aggregating (see GetStats comment)
 	query := `
 		SELECT
 			CAST(strftime('%H', timestamp) AS INTEGER) as hour,
 			COALESCE(model, 'unknown') as model,
 			COUNT(*) as requests,
 			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens
-		FROM conversation_messages
-		WHERE timestamp >= ? AND timestamp < ?
-			AND role IN ('user', 'assistant')
+		FROM (
+			SELECT
+				COALESCE(request_id, uuid) as dedup_key,
+				MIN(timestamp) as timestamp,
+				MAX(model) as model,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens
+			FROM conversation_messages
+			WHERE timestamp >= ? AND timestamp < ?
+				AND role IN ('user', 'assistant')
+			GROUP BY dedup_key
+		)
 		GROUP BY hour, model
 		ORDER BY hour
 	`
@@ -4339,7 +4364,7 @@ func (s *SQLiteStorageService) GetAllSessionIDs() ([]string, error) {
 
 // GetConversationTokenSummary returns aggregated token statistics for a conversation
 func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string) (*model.ConversationTokenSummary, error) {
-	// Query to aggregate tokens by model
+	// Deduplicate by request_id before aggregating (see GetStats comment)
 	query := `
 		SELECT
 			COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as total_tokens,
@@ -4349,9 +4374,19 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
 			COUNT(*) as message_count,
 			COALESCE(model, 'unknown') as model
-		FROM conversation_messages
-		WHERE conversation_id = ?
-			AND role IN ('user', 'assistant')
+		FROM (
+			SELECT
+				COALESCE(request_id, uuid) as dedup_key,
+				MAX(model) as model,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens
+			FROM conversation_messages
+			WHERE conversation_id = ?
+				AND role IN ('user', 'assistant')
+			GROUP BY dedup_key
+		)
 		GROUP BY model
 		ORDER BY total_tokens DESC
 	`
@@ -4432,15 +4467,27 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 	}
 
 	// Query to get project-level stats
+	// Deduplicate by request_id before aggregating (see GetStats comment)
 	query := `
 		SELECT
 			c.project_name,
-			COUNT(DISTINCT cm.conversation_id) as conversation_count,
-			COALESCE(SUM(cm.input_tokens + cm.output_tokens + cm.cache_read_tokens + cm.cache_creation_tokens), 0) as total_tokens
-		FROM conversation_messages cm
-		JOIN conversations c ON cm.conversation_id = c.id
-		WHERE c.start_time BETWEEN ? AND ?
-			AND cm.role IN ('user', 'assistant')
+			COUNT(DISTINCT deduped.conversation_id) as conversation_count,
+			COALESCE(SUM(deduped.input_tokens + deduped.output_tokens + deduped.cache_read_tokens + deduped.cache_creation_tokens), 0) as total_tokens
+		FROM (
+			SELECT
+				COALESCE(cm.request_id, cm.uuid) as dedup_key,
+				cm.conversation_id,
+				MAX(cm.input_tokens) as input_tokens,
+				MAX(cm.output_tokens) as output_tokens,
+				MAX(cm.cache_read_tokens) as cache_read_tokens,
+				MAX(cm.cache_creation_tokens) as cache_creation_tokens
+			FROM conversation_messages cm
+			JOIN conversations c ON cm.conversation_id = c.id
+			WHERE c.start_time BETWEEN ? AND ?
+				AND cm.role IN ('user', 'assistant')
+			GROUP BY dedup_key
+		) deduped
+		JOIN conversations c ON deduped.conversation_id = c.id
 		GROUP BY c.project_name
 		ORDER BY total_tokens DESC
 	`
@@ -4464,14 +4511,24 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 	for _, project := range stats {
 		topQuery := `
 			SELECT
-				cm.conversation_id,
-				COALESCE(SUM(cm.input_tokens + cm.output_tokens + cm.cache_read_tokens + cm.cache_creation_tokens), 0) as total_tokens,
+				conversation_id,
+				COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as total_tokens,
 				COUNT(*) as message_count
-			FROM conversation_messages cm
-			JOIN conversations c ON cm.conversation_id = c.id
-			WHERE c.project_name = ?
-				AND cm.role IN ('user', 'assistant')
-			GROUP BY cm.conversation_id
+			FROM (
+				SELECT
+					COALESCE(cm.request_id, cm.uuid) as dedup_key,
+					cm.conversation_id,
+					MAX(cm.input_tokens) as input_tokens,
+					MAX(cm.output_tokens) as output_tokens,
+					MAX(cm.cache_read_tokens) as cache_read_tokens,
+					MAX(cm.cache_creation_tokens) as cache_creation_tokens
+				FROM conversation_messages cm
+				JOIN conversations c ON cm.conversation_id = c.id
+				WHERE c.project_name = ?
+					AND cm.role IN ('user', 'assistant')
+				GROUP BY dedup_key
+			)
+			GROUP BY conversation_id
 			ORDER BY total_tokens DESC
 			LIMIT 5
 		`
@@ -4497,6 +4554,7 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 
 // GetIndexedConversationsWithTokens returns conversations with token aggregation
 func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*model.IndexedConversationWithTokens, error) {
+	// Deduplicate by request_id before aggregating (see GetStats comment)
 	query := `
 		SELECT
 			c.id,
@@ -4504,13 +4562,32 @@ func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*
 			c.project_name,
 			c.start_time,
 			c.end_time,
-			COUNT(DISTINCT cm.uuid) as message_count,
-			COALESCE(SUM(cm.input_tokens + cm.output_tokens + cm.cache_read_tokens + cm.cache_creation_tokens), 0) as total_tokens,
-			COALESCE(SUM(cm.input_tokens), 0) as input_tokens,
-			COALESCE(SUM(cm.output_tokens), 0) as output_tokens
+			COALESCE(deduped.message_count, 0) as message_count,
+			COALESCE(deduped.total_tokens, 0) as total_tokens,
+			COALESCE(deduped.input_tokens, 0) as input_tokens,
+			COALESCE(deduped.output_tokens, 0) as output_tokens
 		FROM conversations c
-		LEFT JOIN conversation_messages cm ON c.id = cm.conversation_id
-			AND cm.role IN ('user', 'assistant')
+		LEFT JOIN (
+			SELECT
+				conversation_id,
+				COUNT(*) as message_count,
+				SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) as total_tokens,
+				SUM(input_tokens) as input_tokens,
+				SUM(output_tokens) as output_tokens
+			FROM (
+				SELECT
+					COALESCE(request_id, uuid) as dedup_key,
+					conversation_id,
+					MAX(input_tokens) as input_tokens,
+					MAX(output_tokens) as output_tokens,
+					MAX(cache_read_tokens) as cache_read_tokens,
+					MAX(cache_creation_tokens) as cache_creation_tokens
+				FROM conversation_messages
+				WHERE role IN ('user', 'assistant')
+				GROUP BY dedup_key
+			)
+			GROUP BY conversation_id
+		) deduped ON c.id = deduped.conversation_id
 		GROUP BY c.id
 		ORDER BY c.end_time DESC
 	`
