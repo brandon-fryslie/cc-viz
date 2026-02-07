@@ -1862,12 +1862,6 @@ func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*m
 		}, nil
 	}
 
-	// Check if FTS5 is available
-	if !fts5Enabled() {
-		// Fallback to LIKE-based search for test builds
-		return s.searchConversationsLike(opts, terms)
-	}
-
 	// Escape FTS5 special characters and build OR query
 	var escapedTerms []string
 	for _, term := range terms {
@@ -1999,12 +1993,6 @@ func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, 
 			Limit:   limit,
 			Offset:  offset,
 		}, nil
-	}
-
-	// Check if FTS5 is available
-	if !fts5Enabled() {
-		// Fallback to LIKE-based search for test builds
-		return s.searchRequestsLike(query, modelFilter, terms, limit, offset, after, before)
 	}
 
 	// Escape FTS5 special characters and build OR query
@@ -2208,220 +2196,6 @@ func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, l
 	}
 
 	return results, nil
-}
-
-// searchConversationsLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchConversationsLike(opts model.SearchOptions, terms []string) (*model.SearchResults, error) {
-	// Build LIKE-based query for each term
-	whereClauses := []string{}
-	args := []interface{}{}
-
-	for _, term := range terms {
-		whereClauses = append(whereClauses, "(cm.content_json LIKE ? OR cm.tool_use_json LIKE ?)")
-		likePattern := "%" + term + "%"
-		args = append(args, likePattern, likePattern)
-	}
-
-	whereClause := strings.Join(whereClauses, " OR ")
-
-	// Count query
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(DISTINCT c.id)
-		FROM conversations c
-		JOIN conversation_messages cm ON c.id = cm.conversation_id
-		WHERE %s
-	`, whereClause)
-
-	if opts.ProjectPath != "" {
-		countQuery += " AND c.project_path = ?"
-		args = append(args, opts.ProjectPath)
-	}
-
-	dateClause, dateArgs := dateFilterSQL("c.end_time", opts.After, opts.Before)
-	countQuery += dateClause
-	args = append(args, dateArgs...)
-
-	var total int
-	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		return nil, fmt.Errorf("failed to get total count: %w", err)
-	}
-
-	// Main query with pagination
-	query := fmt.Sprintf(`
-		SELECT
-			c.id AS conversation_id,
-			c.project_name,
-			c.project_path,
-			c.end_time AS last_activity,
-			COUNT(cm.uuid) AS match_count
-		FROM conversations c
-		JOIN conversation_messages cm ON c.id = cm.conversation_id
-		WHERE %s
-	`, whereClause)
-
-	queryArgs := make([]interface{}, len(args))
-	copy(queryArgs, args)
-
-	if opts.ProjectPath != "" {
-		query += " AND c.project_path = ?"
-	}
-
-	dateClause2, dateArgs2 := dateFilterSQL("c.end_time", opts.After, opts.Before)
-	query += dateClause2
-	queryArgs = append(queryArgs, dateArgs2...)
-
-	query += `
-		GROUP BY c.id
-		ORDER BY match_count DESC, c.end_time DESC
-		LIMIT ? OFFSET ?
-	`
-	queryArgs = append(queryArgs, opts.Limit, opts.Offset)
-
-	rows, err := s.db.Query(query, queryArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query conversations: %w", err)
-	}
-	defer rows.Close()
-
-	results := make([]*model.ConversationMatch, 0)
-	for rows.Next() {
-		var match model.ConversationMatch
-		var lastActivity sql.NullString
-
-		if err := rows.Scan(
-			&match.ConversationID,
-			&match.ProjectName,
-			&match.ProjectPath,
-			&lastActivity,
-			&match.MatchCount,
-		); err != nil {
-			continue
-		}
-
-		if lastActivity.Valid {
-			if t, err := time.Parse(time.RFC3339, lastActivity.String); err == nil {
-				match.LastActivity = t
-			}
-		}
-
-		results = append(results, &match)
-	}
-
-	return &model.SearchResults{
-		Query:   opts.Query,
-		Results: results,
-		Total:   total,
-		Limit:   opts.Limit,
-		Offset:  opts.Offset,
-	}, nil
-}
-
-// searchRequestsLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchRequestsLike(query, modelFilter string, terms []string, limit, offset int, after, before string) (*model.RequestSearchResults, error) {
-	// Build LIKE-based query for each term
-	whereClauses := []string{}
-	args := []interface{}{}
-
-	for _, term := range terms {
-		whereClauses = append(whereClauses, "(r.endpoint LIKE ? OR r.method LIKE ? OR r.model LIKE ? OR r.provider LIKE ? OR r.tools_used LIKE ?)")
-		likePattern := "%" + term + "%"
-		args = append(args, likePattern, likePattern, likePattern, likePattern, likePattern)
-	}
-
-	whereClause := strings.Join(whereClauses, " OR ")
-
-	// Count query
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM requests r
-		WHERE %s
-	`, whereClause)
-
-	if modelFilter != "" {
-		countQuery += " AND r.model = ?"
-		args = append(args, modelFilter)
-	}
-
-	dateClause, dateArgs := dateFilterSQL("r.timestamp", after, before)
-	countQuery += dateClause
-	args = append(args, dateArgs...)
-
-	var total int
-	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		return nil, fmt.Errorf("failed to get total count: %w", err)
-	}
-
-	// Main query with pagination
-	resultQuery := fmt.Sprintf(`
-		SELECT
-			r.id,
-			r.timestamp,
-			r.method,
-			r.endpoint,
-			r.model,
-			r.provider,
-			1 as match_count,
-			SUBSTR(r.endpoint, 1, 120) as snippet
-		FROM requests r
-		WHERE %s
-	`, whereClause)
-
-	queryArgs := make([]interface{}, len(args))
-	copy(queryArgs, args)
-
-	if modelFilter != "" {
-		resultQuery += " AND r.model = ?"
-		queryArgs = append(queryArgs, modelFilter)
-	}
-
-	dateClause2, dateArgs2 := dateFilterSQL("r.timestamp", after, before)
-	resultQuery += dateClause2
-	queryArgs = append(queryArgs, dateArgs2...)
-
-	resultQuery += `
-		ORDER BY r.timestamp DESC
-		LIMIT ? OFFSET ?
-	`
-	queryArgs = append(queryArgs, limit, offset)
-
-	rows, err := s.db.Query(resultQuery, queryArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query requests: %w", err)
-	}
-	defer rows.Close()
-
-	results := make([]*model.RequestSearchResult, 0)
-	for rows.Next() {
-		var result model.RequestSearchResult
-		var snippet sql.NullString
-
-		if err := rows.Scan(
-			&result.RequestID,
-			&result.Timestamp,
-			&result.Method,
-			&result.Endpoint,
-			&result.Model,
-			&result.Provider,
-			&result.MatchCount,
-			&snippet,
-		); err != nil {
-			continue
-		}
-
-		if snippet.Valid {
-			result.Snippet = snippet.String
-		}
-
-		results = append(results, &result)
-	}
-
-	return &model.RequestSearchResults{
-		Query:   query,
-		Results: results,
-		Total:   total,
-		Limit:   limit,
-		Offset:  offset,
-	}, nil
 }
 
 // GetIndexedConversations returns conversations from the database index - very fast
@@ -2837,12 +2611,6 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 		return []*model.ExtensionSearchResult{}, 0, nil
 	}
 
-	// Check if FTS5 is available
-	if !fts5Enabled() {
-		// Fallback to LIKE-based search for test builds
-		return s.searchExtensionsLike(query, extType, source, terms, limit, offset, after, before)
-	}
-
 	// Escape FTS5 special characters and build OR query
 	var escapedTerms []string
 	for _, term := range terms {
@@ -2949,122 +2717,6 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 			result.HighlightStart = snippet.HighlightStart
 			result.HighlightEnd = snippet.HighlightEnd
 		}
-
-		results = append(results, &result)
-	}
-
-	return results, total, nil
-}
-
-// searchExtensionsLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source string, terms []string, limit, offset int, after, before string) ([]*model.ExtensionSearchResult, int, error) {
-	// Build LIKE-based query for each term
-	whereClauses := []string{}
-	args := []interface{}{}
-
-	for _, term := range terms {
-		whereClauses = append(whereClauses, "(e.name LIKE ? OR e.description LIKE ?)")
-		likePattern := "%" + term + "%"
-		args = append(args, likePattern, likePattern)
-	}
-
-	whereClause := strings.Join(whereClauses, " OR ")
-
-	// Count query
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM extensions e
-		WHERE %s
-	`, whereClause)
-
-	if extType != "" {
-		countQuery += " AND e.type = ?"
-		args = append(args, extType)
-	}
-	if source != "" {
-		countQuery += " AND e.source = ?"
-		args = append(args, source)
-	}
-
-	dateClause, dateArgs := dateFilterSQL("e.updated_at", after, before)
-	countQuery += dateClause
-	args = append(args, dateArgs...)
-
-	var total int
-	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
-	}
-
-	// Results query
-	resultQuery := fmt.Sprintf(`
-		SELECT
-			e.id,
-			e.type,
-			e.name,
-			e.source,
-			e.description,
-			e.updated_at
-		FROM extensions e
-		WHERE %s
-	`, whereClause)
-
-	queryArgs := make([]interface{}, len(args))
-	copy(queryArgs, args)
-
-	if extType != "" {
-		resultQuery += " AND e.type = ?"
-		queryArgs = append(queryArgs, extType)
-	}
-	if source != "" {
-		resultQuery += " AND e.source = ?"
-		queryArgs = append(queryArgs, source)
-	}
-
-	dateClause2, dateArgs2 := dateFilterSQL("e.updated_at", after, before)
-	resultQuery += dateClause2
-	queryArgs = append(queryArgs, dateArgs2...)
-
-	resultQuery += `
-		ORDER BY e.updated_at DESC
-		LIMIT ? OFFSET ?
-	`
-	queryArgs = append(queryArgs, limit, offset)
-
-	rows, err := s.db.Query(resultQuery, queryArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to query extensions: %w", err)
-	}
-	defer rows.Close()
-
-	var results []*model.ExtensionSearchResult
-	for rows.Next() {
-		var result model.ExtensionSearchResult
-		var description sql.NullString
-		var updatedAt sql.NullString
-
-		if err := rows.Scan(
-			&result.ID,
-			&result.Type,
-			&result.Name,
-			&result.Source,
-			&description,
-			&updatedAt,
-		); err != nil {
-			continue
-		}
-
-		if updatedAt.Valid {
-			result.UpdatedAt = updatedAt.String
-		}
-
-		// Extract snippet for LIKE results
-		if description.Valid && description.String != "" {
-			snippet := ExtractSnippet(description.String, query, 100)
-			result.Snippet = snippet.Snippet
-			result.HighlightStart = snippet.HighlightStart
-			result.HighlightEnd = snippet.HighlightEnd
-		}
-		result.MatchCount = 1 // Approximate for LIKE search
 
 		results = append(results, &result)
 	}
@@ -3370,14 +3022,18 @@ func (s *SQLiteStorageService) GetSubagentGraphStats() (*model.SubagentGraphStat
 		stats.AvgAgentsPerSession = float64(stats.TotalAgents) / float64(stats.TotalSessions)
 	}
 
-	// Max depth: For flat hierarchy (all parent_agent_id = NULL), depth is 1
-	// This represents: root session (depth 0) -> subagents (depth 1)
-	// If we later support nested subagents, this would need to calculate actual tree depth
-	if stats.TotalAgents > 0 {
-		stats.MaxDepth = 1
-	} else {
-		stats.MaxDepth = 0
-	}
+	// [LAW:one-source-of-truth] Derive depth from the graph data, not a hardcoded constant
+	s.db.QueryRow(`
+		WITH RECURSIVE depth_calc AS (
+			SELECT agent_id, 1 AS depth
+			FROM subagent_graph WHERE parent_agent_id IS NULL
+			UNION ALL
+			SELECT sg.agent_id, dc.depth + 1
+			FROM subagent_graph sg
+			JOIN depth_calc dc ON sg.parent_agent_id = dc.agent_id
+		)
+		SELECT COALESCE(MAX(depth), 0) FROM depth_calc
+	`).Scan(&stats.MaxDepth)
 
 	return &stats, nil
 }
@@ -3611,6 +3267,59 @@ func getBoolField(m map[string]interface{}, key string) bool {
 		return val
 	}
 	return false
+}
+
+// UpsertSessionsForConversation populates the sessions and session_conversation_map
+// tables for a single conversation that was just indexed. Called incrementally after
+// each conversation file is committed to the database.
+func (s *SQLiteStorageService) UpsertSessionsForConversation(conversationID string) error {
+	// Upsert into sessions: derive session data from conversation_messages for this conversation.
+	_, err := s.db.Exec(`
+		INSERT INTO sessions (id, project_path, started_at, ended_at, message_count)
+		SELECT
+			cm.session_id,
+			c.project_path,
+			MIN(cm.timestamp),
+			MAX(cm.timestamp),
+			COUNT(*)
+		FROM conversation_messages cm
+		JOIN conversations c ON cm.conversation_id = c.id
+		WHERE cm.conversation_id = ?
+		  AND cm.session_id IS NOT NULL AND cm.session_id != ''
+		GROUP BY cm.session_id
+		ON CONFLICT(id) DO UPDATE SET
+			started_at = MIN(sessions.started_at, excluded.started_at),
+			ended_at = MAX(sessions.ended_at, excluded.ended_at),
+			message_count = excluded.message_count
+	`, conversationID)
+	if err != nil {
+		return fmt.Errorf("failed to upsert sessions: %w", err)
+	}
+
+	// Upsert into session_conversation_map.
+	_, err = s.db.Exec(`
+		INSERT INTO session_conversation_map
+			(session_id, conversation_id, first_message_uuid, last_message_uuid, message_count)
+		SELECT
+			session_id,
+			conversation_id,
+			MIN(uuid),
+			MAX(uuid),
+			COUNT(*)
+		FROM conversation_messages
+		WHERE conversation_id = ?
+		  AND session_id IS NOT NULL AND session_id != ''
+		GROUP BY session_id, conversation_id
+		ON CONFLICT(session_id, conversation_id) DO UPDATE SET
+			first_message_uuid = excluded.first_message_uuid,
+			last_message_uuid = excluded.last_message_uuid,
+			message_count = excluded.message_count
+	`, conversationID)
+	if err != nil {
+		return fmt.Errorf("failed to upsert session_conversation_map: %w", err)
+	}
+
+	return nil
 }
 
 // ============================================================================
@@ -3961,12 +3670,6 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 		return []*model.TodoSearchResult{}, 0, nil
 	}
 
-	// Check if FTS5 is available
-	if !fts5Enabled() {
-		// Fallback to LIKE-based search for test builds
-		return s.searchTodosLike(query, status, terms, limit, offset, after, before)
-	}
-
 	// Escape FTS5 special characters and build OR query
 	var escapedTerms []string
 	for _, term := range terms {
@@ -4070,112 +3773,6 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 	return results, total, nil
 }
 
-// searchTodosLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchTodosLike(query, status string, terms []string, limit, offset int, after, before string) ([]*model.TodoSearchResult, int, error) {
-	// Build LIKE-based query for each term
-	whereClauses := []string{}
-	args := []interface{}{}
-
-	for _, term := range terms {
-		whereClauses = append(whereClauses, "(t.content LIKE ?)")
-		likePattern := "%" + term + "%"
-		args = append(args, likePattern)
-	}
-
-	whereClause := strings.Join(whereClauses, " OR ")
-
-	// Count query
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM claude_todos t
-		WHERE %s
-	`, whereClause)
-
-	if status != "" {
-		countQuery += " AND t.status = ?"
-		args = append(args, status)
-	}
-
-	dateClause, dateArgs := dateFilterSQL("t.modified_at", after, before)
-	countQuery += dateClause
-	args = append(args, dateArgs...)
-
-	var total int
-	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
-	}
-
-	// Results query
-	resultQuery := fmt.Sprintf(`
-		SELECT
-			t.id,
-			t.session_uuid,
-			t.content,
-			t.status,
-			t.modified_at
-		FROM claude_todos t
-		WHERE %s
-	`, whereClause)
-
-	queryArgs := make([]interface{}, len(args))
-	copy(queryArgs, args)
-
-	if status != "" {
-		resultQuery += " AND t.status = ?"
-		queryArgs = append(queryArgs, status)
-	}
-
-	dateClause2, dateArgs2 := dateFilterSQL("t.modified_at", after, before)
-	resultQuery += dateClause2
-	queryArgs = append(queryArgs, dateArgs2...)
-
-	resultQuery += `
-		ORDER BY t.modified_at DESC
-		LIMIT ? OFFSET ?
-	`
-	queryArgs = append(queryArgs, limit, offset)
-
-	rows, err := s.db.Query(resultQuery, queryArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to query todos: %w", err)
-	}
-	defer rows.Close()
-
-	var results []*model.TodoSearchResult
-	for rows.Next() {
-		var result model.TodoSearchResult
-		var content sql.NullString
-		var modifiedAt sql.NullString
-
-		if err := rows.Scan(
-			&result.ID,
-			&result.SessionUUID,
-			&content,
-			&result.Status,
-			&modifiedAt,
-		); err != nil {
-			continue
-		}
-
-		if modifiedAt.Valid {
-			result.ModifiedAt = modifiedAt.String
-		}
-
-		// Extract snippet for LIKE results
-		if content.Valid && content.String != "" {
-			snippet := ExtractSnippet(content.String, query, 100)
-			result.Snippet = snippet.Snippet
-			result.HighlightStart = snippet.HighlightStart
-			result.HighlightEnd = snippet.HighlightEnd
-		}
-		result.MatchCount = 1 // Approximate for LIKE search
-
-		results = append(results, &result)
-	}
-
-	return results, total, nil
-}
-
 // GetAllPlans returns all plans (for linking)
 func (s *SQLiteStorageService) GetAllPlans() ([]*model.Plan, error) {
 	query := `
@@ -4226,12 +3823,6 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
 		return []*model.PlanSearchResult{}, 0, nil
-	}
-
-	// Check if FTS5 is available
-	if !fts5Enabled() {
-		// Fallback to LIKE-based search for test builds
-		return s.searchPlansLike(query, status, terms, limit, offset, after, before)
 	}
 
 	// Escape FTS5 special characters and build OR query
@@ -4348,130 +3939,6 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 			result.HighlightStart = snippet.HighlightStart
 			result.HighlightEnd = snippet.HighlightEnd
 		}
-
-		results = append(results, &result)
-	}
-
-	return results, total, nil
-}
-
-// searchPlansLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []string, limit, offset int, after, before string) ([]*model.PlanSearchResult, int, error) {
-	// Build LIKE-based query for each term
-	whereClauses := []string{}
-	args := []interface{}{}
-
-	for _, term := range terms {
-		whereClauses = append(whereClauses, "(p.file_name LIKE ? OR p.display_name LIKE ? OR p.content LIKE ?)")
-		likePattern := "%" + term + "%"
-		args = append(args, likePattern, likePattern, likePattern)
-	}
-
-	whereClause := strings.Join(whereClauses, " OR ")
-
-	// Count query
-	countQuery := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM claude_plans p
-		WHERE %s
-	`, whereClause)
-
-	if status != "" {
-		countQuery += " AND p.status = ?"
-		args = append(args, status)
-	}
-
-	dateClause, dateArgs := dateFilterSQL("p.modified_at", after, before)
-	countQuery += dateClause
-	args = append(args, dateArgs...)
-
-	var total int
-	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
-	}
-
-	// Results query
-	resultQuery := fmt.Sprintf(`
-		SELECT
-			p.id,
-			p.file_name,
-			p.display_name,
-			p.preview,
-			p.content,
-			p.session_uuid,
-			p.modified_at
-		FROM claude_plans p
-		WHERE %s
-	`, whereClause)
-
-	queryArgs := make([]interface{}, len(args))
-	copy(queryArgs, args)
-
-	if status != "" {
-		resultQuery += " AND p.status = ?"
-		queryArgs = append(queryArgs, status)
-	}
-
-	dateClause2, dateArgs2 := dateFilterSQL("p.modified_at", after, before)
-	resultQuery += dateClause2
-	queryArgs = append(queryArgs, dateArgs2...)
-
-	resultQuery += `
-		ORDER BY p.modified_at DESC
-		LIMIT ? OFFSET ?
-	`
-	queryArgs = append(queryArgs, limit, offset)
-
-	rows, err := s.db.Query(resultQuery, queryArgs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to query plans: %w", err)
-	}
-	defer rows.Close()
-
-	var results []*model.PlanSearchResult
-	for rows.Next() {
-		var result model.PlanSearchResult
-		var preview sql.NullString
-		var content sql.NullString
-		var sessionUUID sql.NullString
-		var modifiedAt sql.NullString
-
-		if err := rows.Scan(
-			&result.ID,
-			&result.FileName,
-			&result.DisplayName,
-			&preview,
-			&content,
-			&sessionUUID,
-			&modifiedAt,
-		); err != nil {
-			continue
-		}
-
-		if modifiedAt.Valid {
-			result.ModifiedAt = modifiedAt.String
-		}
-
-		// Set session UUID if available
-		if sessionUUID.Valid {
-			result.SessionUUID = &sessionUUID.String
-		}
-
-		// Extract snippet - prefer content over preview
-		textForSnippet := ""
-		if content.Valid && content.String != "" {
-			textForSnippet = content.String
-		} else if preview.Valid && preview.String != "" {
-			textForSnippet = preview.String
-		}
-
-		if textForSnippet != "" {
-			snippet := ExtractSnippet(textForSnippet, query, 100)
-			result.Snippet = snippet.Snippet
-			result.HighlightStart = snippet.HighlightStart
-			result.HighlightEnd = snippet.HighlightEnd
-		}
-		result.MatchCount = 1 // Approximate for LIKE search
 
 		results = append(results, &result)
 	}
