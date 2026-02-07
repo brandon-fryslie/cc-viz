@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import type {
@@ -40,6 +40,26 @@ interface UnifiedSearchModalProps {
   onClose: () => void
 }
 
+type DatePreset = 'all' | 'today' | '3d' | '7d' | '30d'
+
+const DATE_PRESETS: Array<{ id: DatePreset; label: string }> = [
+  { id: 'all', label: 'Any time' },
+  { id: 'today', label: 'Today' },
+  { id: '3d', label: '3 days' },
+  { id: '7d', label: '7 days' },
+  { id: '30d', label: '30 days' },
+]
+
+function datePresetToAfter(preset: DatePreset): string {
+  if (preset === 'all') return ''
+  const now = new Date()
+  const daysMap: Record<string, number> = { today: 0, '3d': 3, '7d': 7, '30d': 30 }
+  const days = daysMap[preset] ?? 0
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  d.setDate(d.getDate() - days)
+  return d.toISOString()
+}
+
 // Highlight snippet using backend-provided offsets
 function highlightSnippet(snippet: string, start: number, end: number): React.ReactNode {
   if (!snippet) return ''
@@ -56,10 +76,43 @@ function highlightSnippet(snippet: string, start: number, end: number): React.Re
   )
 }
 
-// Middle truncation for UUIDs
-function truncateMiddle(uuid: string): string {
-  if (!uuid || uuid.length <= 12) return uuid
-  return `${uuid.substring(0, 4)}...${uuid.substring(uuid.length - 4)}`
+// Extract a timestamp string from any result type
+function getTimestamp(item: any, type: string): string | null {
+  switch (type) {
+    case 'conversation':
+      return item.lastActivity || null
+    case 'request':
+      return item.timestamp || null
+    case 'extension':
+      return item.updatedAt || null
+    case 'todo':
+      return item.modifiedAt || null
+    case 'plan':
+      return item.modifiedAt || null
+    default:
+      return null
+  }
+}
+
+// Format a timestamp as relative time (e.g. "2h ago", "3d ago")
+function formatRelativeTime(timestamp: string): string {
+  const date = new Date(timestamp)
+  if (isNaN(date.getTime())) return ''
+
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  const diffMin = Math.floor(diffSec / 60)
+  const diffHour = Math.floor(diffMin / 60)
+  const diffDay = Math.floor(diffHour / 24)
+
+  if (diffDay > 30) {
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  }
+  if (diffDay > 0) return `${diffDay}d ago`
+  if (diffHour > 0) return `${diffHour}h ago`
+  if (diffMin > 0) return `${diffMin}m ago`
+  return 'just now'
 }
 
 // Get title for result
@@ -80,7 +133,7 @@ function getResultTitle(item: any, type: string): string {
   }
 }
 
-// Get URL for navigation (P9)
+// Get URL for navigation
 function getResultUrl(item: any, type: string, searchQuery: string): string {
   const q = encodeURIComponent(searchQuery)
 
@@ -106,18 +159,22 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
   const [activeTab, setActiveTab] = useState<'all' | 'requests' | 'conversations' | 'extensions' | 'todos' | 'plans'>('all')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
+  const [datePreset, setDatePreset] = useState<DatePreset>('all')
   const inputRef = useRef<HTMLInputElement>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
 
+  const afterParam = datePresetToAfter(datePreset)
+
   // Fetch unified search results
   const { data: results, isLoading } = useQuery({
-    queryKey: ['unified-search', searchQuery],
+    queryKey: ['unified-search', searchQuery, afterParam],
     queryFn: async () => {
       if (!searchQuery.trim() || searchQuery.length < 2) return null
 
       const params = new URLSearchParams()
       params.set('q', searchQuery)
       params.set('limit', '10')
+      if (afterParam) params.set('after', afterParam)
 
       const response = await fetch(`${API_BASE}/search?${params}`)
       if (!response.ok) throw new Error('Search failed')
@@ -137,16 +194,13 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+Shift+K or Ctrl+Shift+K to toggle modal
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'K') {
         e.preventDefault()
         onClose()
       }
-      // Escape to close
       if (e.key === 'Escape') {
         onClose()
       }
-      // Arrow keys to navigate
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSelectedIndex(prev => prev + 1)
@@ -155,7 +209,6 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
         e.preventDefault()
         setSelectedIndex(prev => Math.max(0, prev - 1))
       }
-      // Enter to select
       if (e.key === 'Enter') {
         e.preventDefault()
         handleSelectResult(selectedIndex)
@@ -168,45 +221,56 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
     }
   }, [isOpen, onClose, selectedIndex])
 
-  // Collect all visible results
-  const getAllVisibleResults = (): Array<{ item: any; type: string }> => {
+  // Collect all visible results, sorted by match_count DESC then recency DESC
+  const allVisibleResults = useMemo((): Array<{ item: any; type: string }> => {
     if (!results) return []
 
-    let allResults: Array<{ item: any; type: string }> = []
+    let collected: Array<{ item: any; type: string }> = []
 
     if (activeTab === 'all' || activeTab === 'requests') {
-      allResults.push(...(results.requests?.results || []).map(r => ({ item: r, type: 'request' })))
+      collected.push(...(results.requests?.results || []).map(r => ({ item: r, type: 'request' })))
     }
     if (activeTab === 'all' || activeTab === 'conversations') {
-      allResults.push(...(results.conversations?.results || []).map(r => ({ item: r, type: 'conversation' })))
+      collected.push(...(results.conversations?.results || []).map(r => ({ item: r, type: 'conversation' })))
     }
     if (activeTab === 'all' || activeTab === 'extensions') {
-      allResults.push(...(results.extensions?.results || []).map(r => ({ item: r, type: 'extension' })))
+      collected.push(...(results.extensions?.results || []).map(r => ({ item: r, type: 'extension' })))
     }
     if (activeTab === 'all' || activeTab === 'todos') {
-      allResults.push(...(results.todos?.results || []).map(r => ({ item: r, type: 'todo' })))
+      collected.push(...(results.todos?.results || []).map(r => ({ item: r, type: 'todo' })))
     }
     if (activeTab === 'all' || activeTab === 'plans') {
-      allResults.push(...(results.plans?.results || []).map(r => ({ item: r, type: 'plan' })))
+      collected.push(...(results.plans?.results || []).map(r => ({ item: r, type: 'plan' })))
     }
 
-    return allResults
-  }
+    // Sort: match_count DESC, then recency DESC
+    collected.sort((a, b) => {
+      const countDiff = (b.item.matchCount ?? 0) - (a.item.matchCount ?? 0)
+      if (countDiff !== 0) return countDiff
+
+      const tsA = getTimestamp(a.item, a.type)
+      const tsB = getTimestamp(b.item, b.type)
+      const dateA = tsA ? new Date(tsA).getTime() : 0
+      const dateB = tsB ? new Date(tsB).getTime() : 0
+      return dateB - dateA
+    })
+
+    return collected
+  }, [results, activeTab])
 
   const handleSelectResult = (index: number) => {
-    const results = getAllVisibleResults()
-    if (index >= 0 && index < results.length) {
-      const { item, type } = results[index]
+    if (index >= 0 && index < allVisibleResults.length) {
+      const { item, type } = allVisibleResults[index]
       const url = getResultUrl(item, type, searchQuery)
       navigate({ to: url })
       onClose()
     }
   }
 
-  const handleCopySessionUUID = (e: React.MouseEvent, uuid: string) => {
+  const handleCopyText = (e: React.MouseEvent, text: string) => {
     e.stopPropagation()
-    navigator.clipboard.writeText(uuid)
-    setCopyFeedback(uuid)
+    navigator.clipboard.writeText(text)
+    setCopyFeedback(text)
     setTimeout(() => setCopyFeedback(null), 2000)
   }
 
@@ -251,14 +315,13 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
     if (isLoading) {
       return (
         <div className="p-4 text-center">
-          <div className="inline-block animate-spin">⏳</div>
+          <div className="inline-block animate-spin">&#x23F3;</div>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">Searching...</p>
         </div>
       )
     }
 
-    const allResults = getAllVisibleResults()
-    if (allResults.length === 0) {
+    if (allVisibleResults.length === 0) {
       return (
         <div className="p-8 text-center text-[var(--color-text-muted)]">
           No results found
@@ -271,7 +334,8 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
       const snippet = item.snippet || item.preview || ''
       const highlightStart = item.highlightStart ?? 0
       const highlightEnd = item.highlightEnd ?? 0
-      const sessionUUID = item.session_uuid || null
+      const timestamp = getTimestamp(item, type)
+      const matchCount = item.matchCount ?? 0
 
       return (
         <div
@@ -289,24 +353,45 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
               {type}
             </span>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
-                {getResultTitle(item, type)}
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
+                  {getResultTitle(item, type)}
+                </div>
               </div>
               <div className="text-xs text-[var(--color-text-secondary)] mt-1 line-clamp-2">
                 {highlightSnippet(snippet, highlightStart, highlightEnd)}
               </div>
-              {sessionUUID && (
+              {type === 'conversation' && item.conversationId && (
                 <button
-                  onClick={(e) => handleCopySessionUUID(e, sessionUUID)}
+                  onClick={(e) => handleCopyText(e, item.conversationId)}
                   className="text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent)] mt-1 transition-colors"
-                  title={`Click to copy: ${sessionUUID}`}
+                  title={`Click to copy session: ${item.conversationId}`}
                 >
-                  {truncateMiddle(sessionUUID)}
-                  {copyFeedback === sessionUUID && (
-                    <span className="ml-2 text-green-600">✓ Copied</span>
+                  session: {item.conversationId}
+                  {copyFeedback === item.conversationId && (
+                    <span className="ml-2 text-green-600">&#x2713; Copied</span>
                   )}
                 </button>
               )}
+              {type !== 'conversation' && item.session_uuid && (
+                <button
+                  onClick={(e) => handleCopyText(e, item.session_uuid)}
+                  className="text-xs font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent)] mt-1 transition-colors"
+                  title={`Click to copy: ${item.session_uuid}`}
+                >
+                  {item.session_uuid.substring(0, 4)}...{item.session_uuid.substring(item.session_uuid.length - 4)}
+                  {copyFeedback === item.session_uuid && (
+                    <span className="ml-2 text-green-600">&#x2713; Copied</span>
+                  )}
+                </button>
+              )}
+              {/* Relevancy info bar */}
+              <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[var(--color-text-muted)]/60 font-mono">
+                <span>{matchCount} {matchCount === 1 ? 'match' : 'matches'}</span>
+                {timestamp && (
+                  <span>{formatRelativeTime(timestamp)}</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -315,7 +400,7 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
 
     return (
       <div ref={resultsRef} className="overflow-y-auto max-h-96">
-        {allResults.map(({ item, type }, idx) => renderItem(item, type, idx))}
+        {allVisibleResults.map(({ item, type }, idx) => renderItem(item, type, idx))}
       </div>
     )
   }
@@ -333,6 +418,22 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-transparent text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] text-lg outline-none"
           />
+          {/* Date filter chips */}
+          <div className="flex gap-1.5 mt-2">
+            {DATE_PRESETS.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setDatePreset(id)}
+                className={`px-2 py-0.5 text-xs rounded-full transition-colors ${
+                  datePreset === id
+                    ? 'bg-[var(--color-accent)] text-white'
+                    : 'bg-[var(--color-accent)]/10 text-[var(--color-text-secondary)] hover:bg-[var(--color-accent)]/20'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Tabs */}

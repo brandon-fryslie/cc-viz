@@ -692,6 +692,7 @@ export interface ExtensionSearchResult {
   highlightStart: number
   highlightEnd: number
   matchCount: number
+  updatedAt?: string
 }
 
 /**
@@ -705,6 +706,7 @@ export interface TodoSearchResult {
   highlightStart: number
   highlightEnd: number
   matchCount: number
+  modifiedAt?: string
 }
 
 /**
@@ -719,4 +721,5 @@ export interface PlanSearchResult {
   highlightStart: number
   highlightEnd: number
   matchCount: number
+  modifiedAt?: string
 }

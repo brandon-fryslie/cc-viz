@@ -336,6 +336,8 @@ type SearchOptions struct {
 	ProjectPath string
 	Limit       int
 	Offset      int
+	After       string // RFC3339 lower bound (inclusive)
+	Before      string // RFC3339 upper bound (inclusive)
 }
 
 type SearchResults struct {
@@ -408,6 +410,7 @@ type ExtensionSearchResult struct {
 	HighlightStart int    `json:"highlightStart"`
 	HighlightEnd   int    `json:"highlightEnd"`
 	MatchCount     int    `json:"matchCount"`
+	UpdatedAt      string `json:"updatedAt,omitempty"`
 }
 
 // TodoSearchResult represents a lightweight todo search result with snippet
@@ -419,6 +422,7 @@ type TodoSearchResult struct {
 	HighlightStart int    `json:"highlightStart"`
 	HighlightEnd   int    `json:"highlightEnd"`
 	MatchCount     int    `json:"matchCount"`
+	ModifiedAt     string `json:"modifiedAt,omitempty"`
 }
 
 // PlanSearchResult represents a lightweight plan search result with snippet
@@ -431,6 +435,7 @@ type PlanSearchResult struct {
 	HighlightStart int     `json:"highlightStart"`
 	HighlightEnd   int     `json:"highlightEnd"`
 	MatchCount     int     `json:"matchCount"`
+	ModifiedAt     string  `json:"modifiedAt,omitempty"`
 }
 
 
@@ -441,7 +446,7 @@ type IndexedConversation struct {
 	ProjectName  string    `json:"projectName"`
 	StartTime    time.Time `json:"startTime"`
 	EndTime      time.Time `json:"lastActivity"`
-	MessageCount int       `json:"requestCount"`
+	MessageCount int       `json:"messageCount"`
 }
 
 // DBConversationMessage represents a message stored in the database
@@ -705,7 +710,7 @@ type IndexedConversationWithTokens struct {
 	ProjectName  string    `json:"projectName"`
 	StartTime    time.Time `json:"startTime"`
 	EndTime      time.Time `json:"lastActivity"`
-	MessageCount int       `json:"requestCount"`
+	MessageCount int       `json:"messageCount"`
 	TotalTokens  int64     `json:"totalTokens"`
 	InputTokens  int64     `json:"inputTokens"`
 	OutputTokens int64     `json:"outputTokens"`

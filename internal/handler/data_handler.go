@@ -450,7 +450,7 @@ func (h *DataHandler) GetConversations(w http.ResponseWriter, r *http.Request) {
 
 			allConversations = append(allConversations, map[string]interface{}{
 				"id":           conv.SessionID,
-				"requestCount": conv.MessageCount,
+				"messageCount": conv.MessageCount,
 				"startTime":    conv.StartTime.Format(time.RFC3339),
 				"lastActivity": conv.EndTime.Format(time.RFC3339),
 				"duration":     conv.EndTime.Sub(conv.StartTime).Milliseconds(),
@@ -686,7 +686,7 @@ func (h *DataHandler) SearchRequestsV2(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("🔍 Searching requests: query=%q, model=%q, limit=%d, offset=%d", query, modelFilter, limit, offset)
 
-	results, err := h.storageService.SearchRequests(query, modelFilter, limit, offset)
+	results, err := h.storageService.SearchRequests(query, modelFilter, limit, offset, "", "")
 	if err != nil {
 		log.Printf("❌ Error searching requests (query=%q, model=%q): %v", query, modelFilter, err)
 		writeErrorResponse(w, "Failed to search requests", http.StatusInternalServerError)
@@ -742,9 +742,12 @@ func (h *DataHandler) SearchUnifiedV2(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("🔍 Unified search: query=%q, types=%v, limit=%d, offset=%d", query, dataTypes, limit, offset)
+	after := r.URL.Query().Get("after")
+	before := r.URL.Query().Get("before")
 
-	results, err := h.storageService.SearchUnified(query, dataTypes, limit, offset)
+	log.Printf("🔍 Unified search: query=%q, types=%v, limit=%d, offset=%d, after=%q, before=%q", query, dataTypes, limit, offset, after, before)
+
+	results, err := h.storageService.SearchUnified(query, dataTypes, limit, offset, after, before)
 	if err != nil {
 		log.Printf("❌ Error searching unified (query=%q): %v", query, err)
 		writeErrorResponse(w, "Failed to perform unified search", http.StatusInternalServerError)
@@ -757,9 +760,16 @@ func (h *DataHandler) SearchUnifiedV2(w http.ResponseWriter, r *http.Request) {
 
 // GetConversationsV2 returns array of conversations from the database index - fast!
 func (h *DataHandler) GetConversationsV2(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🔍 GetConversationsV2 called - requesting limit 100")
+	// Parse limit from query param, default to 100
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 10000 {
+			limit = l
+		}
+	}
+	log.Printf("🔍 GetConversationsV2 called - requesting limit %d", limit)
 	// Use the fast database-backed method
-	conversations, err := h.storageService.GetIndexedConversations(100)
+	conversations, err := h.storageService.GetIndexedConversations(limit)
 	if err != nil {
 		log.Printf("❌ Error getting indexed conversations: %v", err)
 		writeErrorResponse(w, "Failed to get conversations", http.StatusInternalServerError)
@@ -1852,7 +1862,7 @@ func (h *DataHandler) SearchTodosV2(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	todos, total, err := h.storageService.SearchTodos(query, status, limit, offset)
+	todos, total, err := h.storageService.SearchTodos(query, status, limit, offset, "", "")
 	if err != nil {
 		log.Printf("Error searching todos: %v", err)
 		writeErrorResponse(w, "Failed to search todos", http.StatusInternalServerError)
@@ -1897,7 +1907,7 @@ func (h *DataHandler) SearchPlansV2(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	plans, total, err := h.storageService.SearchPlans(query, status, limit, offset)
+	plans, total, err := h.storageService.SearchPlans(query, status, limit, offset, "", "")
 	if err != nil {
 		log.Printf("Error searching plans: %v", err)
 		writeErrorResponse(w, "Failed to search plans", http.StatusInternalServerError)
@@ -1980,7 +1990,7 @@ func (h *DataHandler) GetExtensionsV2(w http.ResponseWriter, r *http.Request) {
 	// Use FTS5 search if search query provided, otherwise use filtered query
 	if search != "" {
 		// Search returns lightweight ExtensionSearchResult with snippets
-		results, total, err := h.storageService.SearchExtensions(search, extType, source, limit, offset)
+		results, total, err := h.storageService.SearchExtensions(search, extType, source, limit, offset, "", "")
 		if err != nil {
 			log.Printf("Error searching extensions: %v", err)
 			writeErrorResponse(w, "Failed to search extensions", http.StatusInternalServerError)

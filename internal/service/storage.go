@@ -33,11 +33,11 @@ type StorageService interface {
 
 	// Conversation search
 	SearchConversations(opts model.SearchOptions) (*model.SearchResults, error)
-	SearchRequests(query string, modelFilter string, limit, offset int) (*model.RequestSearchResults, error)
-	SearchExtensions(query string, extType, source string, limit, offset int) ([]*model.ExtensionSearchResult, int, error)
-	SearchTodos(query, status string, limit, offset int) ([]*model.TodoSearchResult, int, error)
-	SearchPlans(query, status string, limit, offset int) ([]*model.PlanSearchResult, int, error)
-	SearchUnified(query string, dataTypes []string, limit, offset int) (*model.UnifiedSearchResults, error)
+	SearchRequests(query string, modelFilter string, limit, offset int, after, before string) (*model.RequestSearchResults, error)
+	SearchExtensions(query string, extType, source string, limit, offset int, after, before string) ([]*model.ExtensionSearchResult, int, error)
+	SearchTodos(query, status string, limit, offset int, after, before string) ([]*model.TodoSearchResult, int, error)
+	SearchPlans(query, status string, limit, offset int, after, before string) ([]*model.PlanSearchResult, int, error)
+	SearchUnified(query string, dataTypes []string, limit, offset int, after, before string) (*model.UnifiedSearchResults, error)
 
 	// Indexed conversations - fast database lookup
 	GetIndexedConversations(limit int) ([]*model.IndexedConversation, error)

@@ -42,6 +42,21 @@ func NewSQLiteStorageService(cfg *config.StorageConfig) (StorageService, error) 
 	return service, nil
 }
 
+// dateFilterSQL returns SQL AND clauses and args for optional date range filtering.
+func dateFilterSQL(column, after, before string) (string, []interface{}) {
+	var clause string
+	var args []interface{}
+	if after != "" {
+		clause += fmt.Sprintf(" AND %s >= ?", column)
+		args = append(args, after)
+	}
+	if before != "" {
+		clause += fmt.Sprintf(" AND %s <= ?", column)
+		args = append(args, before)
+	}
+	return clause, args
+}
+
 func (s *SQLiteStorageService) createTables() error {
 	// Check if table exists
 	var tableExists int
@@ -1887,6 +1902,10 @@ func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*m
 		args = append(args, opts.ProjectPath)
 	}
 
+	dateClause2, dateArgs2 := dateFilterSQL("c.end_time", opts.After, opts.Before)
+	query += dateClause2
+	args = append(args, dateArgs2...)
+
 	query += `
 		GROUP BY c.id
 		ORDER BY match_count DESC, c.end_time DESC
@@ -1904,6 +1923,10 @@ func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*m
 		countQuery += " AND c.project_path = ?"
 		countArgs = append(countArgs, opts.ProjectPath)
 	}
+
+	dateClause, dateArgs := dateFilterSQL("c.end_time", opts.After, opts.Before)
+	countQuery += dateClause
+	countArgs = append(countArgs, dateArgs...)
 
 	var total int
 	if err := s.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
@@ -1965,7 +1988,7 @@ func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*m
 
 
 // SearchRequests performs full-text search on request data
-func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, limit, offset int) (*model.RequestSearchResults, error) {
+func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, limit, offset int, after, before string) (*model.RequestSearchResults, error) {
 	// Build FTS5 query - convert user input to OR logic for multi-term searches
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
@@ -1981,7 +2004,7 @@ func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, 
 	// Check if FTS5 is available
 	if !fts5Enabled() {
 		// Fallback to LIKE-based search for test builds
-		return s.searchRequestsLike(query, modelFilter, terms, limit, offset)
+		return s.searchRequestsLike(query, modelFilter, terms, limit, offset, after, before)
 	}
 
 	// Escape FTS5 special characters and build OR query
@@ -2007,6 +2030,10 @@ func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, 
 		countQuery += " AND r.model = ?"
 		args = append(args, modelFilter)
 	}
+
+	dateClause, dateArgs := dateFilterSQL("r.timestamp", after, before)
+	countQuery += dateClause
+	args = append(args, dateArgs...)
 
 	// Get total count
 	var total int
@@ -2036,6 +2063,10 @@ func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, 
 		resultQuery += " AND r.model = ?"
 		queryArgs = append(queryArgs, modelFilter)
 	}
+
+	dateClause2, dateArgs2 := dateFilterSQL("r.timestamp", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
 
 	resultQuery += `
 		GROUP BY r.id
@@ -2089,7 +2120,7 @@ func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, 
 }
 
 // SearchUnified performs full-text search across all data types
-func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, limit, offset int) (*model.UnifiedSearchResults, error) {
+func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, limit, offset int, after, before string) (*model.UnifiedSearchResults, error) {
 	// If no types specified, search all
 	if len(dataTypes) == 0 {
 		dataTypes = []string{"requests", "conversations", "extensions", "todos", "plans"}
@@ -2107,7 +2138,7 @@ func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, l
 
 	// Search requests
 	if typeSet["requests"] {
-		reqs, err := s.SearchRequests(query, "", limit, offset)
+		reqs, err := s.SearchRequests(query, "", limit, offset, after, before)
 		if err != nil {
 			log.Printf("Warning: request search failed: %v", err)
 		} else {
@@ -2121,6 +2152,8 @@ func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, l
 			Query:  query,
 			Limit:  limit,
 			Offset: offset,
+			After:  after,
+			Before: before,
 		})
 		if err != nil {
 			log.Printf("Warning: conversation search failed: %v", err)
@@ -2131,7 +2164,7 @@ func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, l
 
 	// Search extensions
 	if typeSet["extensions"] {
-		exts, total, err := s.SearchExtensions(query, "", "", limit, offset)
+		exts, total, err := s.SearchExtensions(query, "", "", limit, offset, after, before)
 		if err != nil {
 			log.Printf("Warning: extension search failed: %v", err)
 		} else {
@@ -2146,7 +2179,7 @@ func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, l
 
 	// Search todos
 	if typeSet["todos"] {
-		todos, total, err := s.SearchTodos(query, "", limit, offset)
+		todos, total, err := s.SearchTodos(query, "", limit, offset, after, before)
 		if err != nil {
 			log.Printf("Warning: todo search failed: %v", err)
 		} else {
@@ -2161,7 +2194,7 @@ func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, l
 
 	// Search plans
 	if typeSet["plans"] {
-		plans, total, err := s.SearchPlans(query, "", limit, offset)
+		plans, total, err := s.SearchPlans(query, "", limit, offset, after, before)
 		if err != nil {
 			log.Printf("Warning: plan search failed: %v", err)
 		} else {
@@ -2204,6 +2237,10 @@ func (s *SQLiteStorageService) searchConversationsLike(opts model.SearchOptions,
 		args = append(args, opts.ProjectPath)
 	}
 
+	dateClause, dateArgs := dateFilterSQL("c.end_time", opts.After, opts.Before)
+	countQuery += dateClause
+	args = append(args, dateArgs...)
+
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, fmt.Errorf("failed to get total count: %w", err)
@@ -2228,6 +2265,10 @@ func (s *SQLiteStorageService) searchConversationsLike(opts model.SearchOptions,
 	if opts.ProjectPath != "" {
 		query += " AND c.project_path = ?"
 	}
+
+	dateClause2, dateArgs2 := dateFilterSQL("c.end_time", opts.After, opts.Before)
+	query += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
 
 	query += `
 		GROUP BY c.id
@@ -2276,7 +2317,7 @@ func (s *SQLiteStorageService) searchConversationsLike(opts model.SearchOptions,
 }
 
 // searchRequestsLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchRequestsLike(query, modelFilter string, terms []string, limit, offset int) (*model.RequestSearchResults, error) {
+func (s *SQLiteStorageService) searchRequestsLike(query, modelFilter string, terms []string, limit, offset int, after, before string) (*model.RequestSearchResults, error) {
 	// Build LIKE-based query for each term
 	whereClauses := []string{}
 	args := []interface{}{}
@@ -2300,6 +2341,10 @@ func (s *SQLiteStorageService) searchRequestsLike(query, modelFilter string, ter
 		countQuery += " AND r.model = ?"
 		args = append(args, modelFilter)
 	}
+
+	dateClause, dateArgs := dateFilterSQL("r.timestamp", after, before)
+	countQuery += dateClause
+	args = append(args, dateArgs...)
 
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -2328,6 +2373,10 @@ func (s *SQLiteStorageService) searchRequestsLike(query, modelFilter string, ter
 		resultQuery += " AND r.model = ?"
 		queryArgs = append(queryArgs, modelFilter)
 	}
+
+	dateClause2, dateArgs2 := dateFilterSQL("r.timestamp", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
 
 	resultQuery += `
 		ORDER BY r.timestamp DESC
@@ -2781,7 +2830,7 @@ func (s *SQLiteStorageService) SaveExtension(ext *model.Extension) error {
 }
 
 // SearchExtensions performs full-text search on extensions
-func (s *SQLiteStorageService) SearchExtensions(query string, extType, source string, limit, offset int) ([]*model.ExtensionSearchResult, int, error) {
+func (s *SQLiteStorageService) SearchExtensions(query string, extType, source string, limit, offset int, after, before string) ([]*model.ExtensionSearchResult, int, error) {
 	// Build FTS5 query - convert user input to OR logic
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
@@ -2791,7 +2840,7 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 	// Check if FTS5 is available
 	if !fts5Enabled() {
 		// Fallback to LIKE-based search for test builds
-		return s.searchExtensionsLike(query, extType, source, terms, limit, offset)
+		return s.searchExtensionsLike(query, extType, source, terms, limit, offset, after, before)
 	}
 
 	// Escape FTS5 special characters and build OR query
@@ -2820,6 +2869,10 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 		countArgs = append(countArgs, source)
 	}
 
+	dateClause, dateArgs := dateFilterSQL("e.updated_at", after, before)
+	countQuery += dateClause
+	countArgs = append(countArgs, dateArgs...)
+
 	var total int
 	if err := s.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
@@ -2833,7 +2886,8 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 			e.name,
 			e.source,
 			e.description,
-			COUNT(f.rowid) as match_count
+			COUNT(f.rowid) as match_count,
+			e.updated_at
 		FROM extensions_fts f
 		JOIN extensions e ON f.extension_id = e.id
 		WHERE extensions_fts MATCH ?
@@ -2849,9 +2903,13 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 		queryArgs = append(queryArgs, source)
 	}
 
+	dateClause2, dateArgs2 := dateFilterSQL("e.updated_at", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
+
 	resultQuery += `
 		GROUP BY e.id
-		ORDER BY match_count DESC, e.type, e.name
+		ORDER BY match_count DESC, e.updated_at DESC
 		LIMIT ? OFFSET ?
 	`
 	queryArgs = append(queryArgs, limit, offset)
@@ -2866,6 +2924,7 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 	for rows.Next() {
 		var result model.ExtensionSearchResult
 		var description sql.NullString
+		var updatedAt sql.NullString
 
 		if err := rows.Scan(
 			&result.ID,
@@ -2874,8 +2933,13 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 			&result.Source,
 			&description,
 			&result.MatchCount,
+			&updatedAt,
 		); err != nil {
 			continue
+		}
+
+		if updatedAt.Valid {
+			result.UpdatedAt = updatedAt.String
 		}
 
 		// Extract snippet with highlights from description
@@ -2893,7 +2957,7 @@ func (s *SQLiteStorageService) SearchExtensions(query string, extType, source st
 }
 
 // searchExtensionsLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source string, terms []string, limit, offset int) ([]*model.ExtensionSearchResult, int, error) {
+func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source string, terms []string, limit, offset int, after, before string) ([]*model.ExtensionSearchResult, int, error) {
 	// Build LIKE-based query for each term
 	whereClauses := []string{}
 	args := []interface{}{}
@@ -2922,6 +2986,10 @@ func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source strin
 		args = append(args, source)
 	}
 
+	dateClause, dateArgs := dateFilterSQL("e.updated_at", after, before)
+	countQuery += dateClause
+	args = append(args, dateArgs...)
+
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
@@ -2934,7 +3002,8 @@ func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source strin
 			e.type,
 			e.name,
 			e.source,
-			e.description
+			e.description,
+			e.updated_at
 		FROM extensions e
 		WHERE %s
 	`, whereClause)
@@ -2951,8 +3020,12 @@ func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source strin
 		queryArgs = append(queryArgs, source)
 	}
 
+	dateClause2, dateArgs2 := dateFilterSQL("e.updated_at", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
+
 	resultQuery += `
-		ORDER BY e.type, e.name
+		ORDER BY e.updated_at DESC
 		LIMIT ? OFFSET ?
 	`
 	queryArgs = append(queryArgs, limit, offset)
@@ -2967,6 +3040,7 @@ func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source strin
 	for rows.Next() {
 		var result model.ExtensionSearchResult
 		var description sql.NullString
+		var updatedAt sql.NullString
 
 		if err := rows.Scan(
 			&result.ID,
@@ -2974,8 +3048,13 @@ func (s *SQLiteStorageService) searchExtensionsLike(query, extType, source strin
 			&result.Name,
 			&result.Source,
 			&description,
+			&updatedAt,
 		); err != nil {
 			continue
+		}
+
+		if updatedAt.Valid {
+			result.UpdatedAt = updatedAt.String
 		}
 
 		// Extract snippet for LIKE results
@@ -3875,7 +3954,7 @@ func (s *SQLiteStorageService) GetTodosBySession(sessionID string) ([]*model.Tod
 }
 
 // SearchTodos performs full-text search on todos
-func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset int) ([]*model.TodoSearchResult, int, error) {
+func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset int, after, before string) ([]*model.TodoSearchResult, int, error) {
 	// Build FTS5 query - convert user input to OR logic
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
@@ -3885,7 +3964,7 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 	// Check if FTS5 is available
 	if !fts5Enabled() {
 		// Fallback to LIKE-based search for test builds
-		return s.searchTodosLike(query, status, terms, limit, offset)
+		return s.searchTodosLike(query, status, terms, limit, offset, after, before)
 	}
 
 	// Escape FTS5 special characters and build OR query
@@ -3910,6 +3989,10 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 		countArgs = append(countArgs, status)
 	}
 
+	dateClause, dateArgs := dateFilterSQL("t.modified_at", after, before)
+	countQuery += dateClause
+	countArgs = append(countArgs, dateArgs...)
+
 	var total int
 	if err := s.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
@@ -3922,7 +4005,8 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 			t.session_uuid,
 			t.content,
 			t.status,
-			COUNT(f.rowid) as match_count
+			COUNT(f.rowid) as match_count,
+			t.modified_at
 		FROM todos_fts f
 		JOIN claude_todos t ON f.todo_id = t.id
 		WHERE todos_fts MATCH ?
@@ -3933,6 +4017,10 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 		resultQuery += " AND t.status = ?"
 		queryArgs = append(queryArgs, status)
 	}
+
+	dateClause2, dateArgs2 := dateFilterSQL("t.modified_at", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
 
 	resultQuery += `
 		GROUP BY t.id
@@ -3951,6 +4039,7 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 	for rows.Next() {
 		var result model.TodoSearchResult
 		var content sql.NullString
+		var modifiedAt sql.NullString
 
 		if err := rows.Scan(
 			&result.ID,
@@ -3958,8 +4047,13 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 			&content,
 			&result.Status,
 			&result.MatchCount,
+			&modifiedAt,
 		); err != nil {
 			continue
+		}
+
+		if modifiedAt.Valid {
+			result.ModifiedAt = modifiedAt.String
 		}
 
 		// Extract snippet with highlights from content
@@ -3977,7 +4071,7 @@ func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset i
 }
 
 // searchTodosLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchTodosLike(query, status string, terms []string, limit, offset int) ([]*model.TodoSearchResult, int, error) {
+func (s *SQLiteStorageService) searchTodosLike(query, status string, terms []string, limit, offset int, after, before string) ([]*model.TodoSearchResult, int, error) {
 	// Build LIKE-based query for each term
 	whereClauses := []string{}
 	args := []interface{}{}
@@ -4002,6 +4096,10 @@ func (s *SQLiteStorageService) searchTodosLike(query, status string, terms []str
 		args = append(args, status)
 	}
 
+	dateClause, dateArgs := dateFilterSQL("t.modified_at", after, before)
+	countQuery += dateClause
+	args = append(args, dateArgs...)
+
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
@@ -4013,7 +4111,8 @@ func (s *SQLiteStorageService) searchTodosLike(query, status string, terms []str
 			t.id,
 			t.session_uuid,
 			t.content,
-			t.status
+			t.status,
+			t.modified_at
 		FROM claude_todos t
 		WHERE %s
 	`, whereClause)
@@ -4025,6 +4124,10 @@ func (s *SQLiteStorageService) searchTodosLike(query, status string, terms []str
 		resultQuery += " AND t.status = ?"
 		queryArgs = append(queryArgs, status)
 	}
+
+	dateClause2, dateArgs2 := dateFilterSQL("t.modified_at", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
 
 	resultQuery += `
 		ORDER BY t.modified_at DESC
@@ -4042,14 +4145,20 @@ func (s *SQLiteStorageService) searchTodosLike(query, status string, terms []str
 	for rows.Next() {
 		var result model.TodoSearchResult
 		var content sql.NullString
+		var modifiedAt sql.NullString
 
 		if err := rows.Scan(
 			&result.ID,
 			&result.SessionUUID,
 			&content,
 			&result.Status,
+			&modifiedAt,
 		); err != nil {
 			continue
+		}
+
+		if modifiedAt.Valid {
+			result.ModifiedAt = modifiedAt.String
 		}
 
 		// Extract snippet for LIKE results
@@ -4112,7 +4221,7 @@ func (s *SQLiteStorageService) GetAllPlans() ([]*model.Plan, error) {
 }
 
 // SearchPlans performs full-text search on plans
-func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset int) ([]*model.PlanSearchResult, int, error) {
+func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset int, after, before string) ([]*model.PlanSearchResult, int, error) {
 	// Build FTS5 query - convert user input to OR logic
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
@@ -4122,7 +4231,7 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 	// Check if FTS5 is available
 	if !fts5Enabled() {
 		// Fallback to LIKE-based search for test builds
-		return s.searchPlansLike(query, status, terms, limit, offset)
+		return s.searchPlansLike(query, status, terms, limit, offset, after, before)
 	}
 
 	// Escape FTS5 special characters and build OR query
@@ -4147,6 +4256,10 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 		countArgs = append(countArgs, status)
 	}
 
+	dateClause, dateArgs := dateFilterSQL("p.modified_at", after, before)
+	countQuery += dateClause
+	countArgs = append(countArgs, dateArgs...)
+
 	var total int
 	if err := s.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
@@ -4161,7 +4274,8 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 			p.preview,
 			p.content,
 			p.session_uuid,
-			COUNT(f.rowid) as match_count
+			COUNT(f.rowid) as match_count,
+			p.modified_at
 		FROM plans_fts f
 		JOIN claude_plans p ON f.plan_id = p.id
 		WHERE plans_fts MATCH ?
@@ -4172,6 +4286,10 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 		resultQuery += " AND p.status = ?"
 		queryArgs = append(queryArgs, status)
 	}
+
+	dateClause2, dateArgs2 := dateFilterSQL("p.modified_at", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
 
 	resultQuery += `
 		GROUP BY p.id
@@ -4192,6 +4310,7 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 		var preview sql.NullString
 		var content sql.NullString
 		var sessionUUID sql.NullString
+		var modifiedAt sql.NullString
 
 		if err := rows.Scan(
 			&result.ID,
@@ -4201,8 +4320,13 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 			&content,
 			&sessionUUID,
 			&result.MatchCount,
+			&modifiedAt,
 		); err != nil {
 			continue
+		}
+
+		if modifiedAt.Valid {
+			result.ModifiedAt = modifiedAt.String
 		}
 
 		// Set session UUID if available
@@ -4232,7 +4356,7 @@ func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset i
 }
 
 // searchPlansLike is a fallback for test builds without FTS5
-func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []string, limit, offset int) ([]*model.PlanSearchResult, int, error) {
+func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []string, limit, offset int, after, before string) ([]*model.PlanSearchResult, int, error) {
 	// Build LIKE-based query for each term
 	whereClauses := []string{}
 	args := []interface{}{}
@@ -4257,6 +4381,10 @@ func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []str
 		args = append(args, status)
 	}
 
+	dateClause, dateArgs := dateFilterSQL("p.modified_at", after, before)
+	countQuery += dateClause
+	args = append(args, dateArgs...)
+
 	var total int
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
@@ -4270,7 +4398,8 @@ func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []str
 			p.display_name,
 			p.preview,
 			p.content,
-			p.session_uuid
+			p.session_uuid,
+			p.modified_at
 		FROM claude_plans p
 		WHERE %s
 	`, whereClause)
@@ -4282,6 +4411,10 @@ func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []str
 		resultQuery += " AND p.status = ?"
 		queryArgs = append(queryArgs, status)
 	}
+
+	dateClause2, dateArgs2 := dateFilterSQL("p.modified_at", after, before)
+	resultQuery += dateClause2
+	queryArgs = append(queryArgs, dateArgs2...)
 
 	resultQuery += `
 		ORDER BY p.modified_at DESC
@@ -4301,6 +4434,7 @@ func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []str
 		var preview sql.NullString
 		var content sql.NullString
 		var sessionUUID sql.NullString
+		var modifiedAt sql.NullString
 
 		if err := rows.Scan(
 			&result.ID,
@@ -4309,8 +4443,13 @@ func (s *SQLiteStorageService) searchPlansLike(query, status string, terms []str
 			&preview,
 			&content,
 			&sessionUUID,
+			&modifiedAt,
 		); err != nil {
 			continue
+		}
+
+		if modifiedAt.Valid {
+			result.ModifiedAt = modifiedAt.String
 		}
 
 		// Set session UUID if available
