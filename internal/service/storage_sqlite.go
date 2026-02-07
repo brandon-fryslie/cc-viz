@@ -42,6 +42,64 @@ func NewSQLiteStorageService(cfg *config.StorageConfig) (StorageService, error) 
 	return service, nil
 }
 
+// buildFTS5Query parses user input into an FTS5 query string.
+// Supports quoted phrases ("exact phrase") and bare words.
+// Bare words are AND-ed together so all must match.
+// Quoted phrases are treated as exact substring matches by FTS5.
+// Examples:
+//
+//	"hello world"        -> "hello" AND "world"
+//	`"hello world"`      -> "hello world"  (phrase match)
+//	`fix "auth bug" now` -> "fix" AND "auth bug" AND "now"
+func buildFTS5Query(input string) string {
+	var parts []string
+	remaining := input
+
+	for len(remaining) > 0 {
+		remaining = strings.TrimSpace(remaining)
+		if len(remaining) == 0 {
+			break
+		}
+
+		if remaining[0] == '"' {
+			// Find closing quote
+			end := strings.Index(remaining[1:], `"`)
+			if end == -1 {
+				// No closing quote — treat rest as a phrase
+				phrase := remaining[1:]
+				if phrase != "" {
+					escaped := strings.ReplaceAll(phrase, `"`, `""`)
+					parts = append(parts, fmt.Sprintf(`"%s"`, escaped))
+				}
+				break
+			}
+			phrase := remaining[1 : end+1]
+			remaining = remaining[end+2:]
+			if phrase != "" {
+				escaped := strings.ReplaceAll(phrase, `"`, `""`)
+				parts = append(parts, fmt.Sprintf(`"%s"`, escaped))
+			}
+		} else {
+			// Bare word — find next space or quote
+			end := strings.IndexAny(remaining, ` "`)
+			var word string
+			if end == -1 {
+				word = remaining
+				remaining = ""
+			} else {
+				word = remaining[:end]
+				remaining = remaining[end:]
+			}
+			if word != "" {
+				escaped := strings.ReplaceAll(word, `"`, `""`)
+				parts = append(parts, fmt.Sprintf(`"%s"`, escaped))
+			}
+		}
+	}
+
+	return strings.Join(parts, " AND ")
+}
+
 // dateFilterSQL returns SQL AND clauses and args for optional date range filtering.
 func dateFilterSQL(column, after, before string) (string, []interface{}) {
 	var clause string
@@ -1850,9 +1908,7 @@ func percentileInt64(sorted []int64, p int) int64 {
 // SearchConversations performs FTS5 search on conversation content (with fallback for test mode)
 // Updated SearchConversations with snippet extraction
 func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*model.SearchResults, error) {
-	// Build FTS5 query - convert user input to OR logic for multi-term searches
-	terms := strings.Fields(opts.Query)
-	if len(terms) == 0 {
+	if strings.TrimSpace(opts.Query) == "" {
 		return &model.SearchResults{
 			Query:   opts.Query,
 			Results: []*model.ConversationMatch{},
@@ -1862,14 +1918,7 @@ func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*m
 		}, nil
 	}
 
-	// Escape FTS5 special characters and build OR query
-	var escapedTerms []string
-	for _, term := range terms {
-		// Escape double quotes by doubling them
-		escaped := strings.ReplaceAll(term, `"`, `""`)
-		escapedTerms = append(escapedTerms, fmt.Sprintf(`"%s"`, escaped))
-	}
-	ftsQuery := strings.Join(escapedTerms, " OR ")
+	ftsQuery := buildFTS5Query(opts.Query)
 
 	// Build the main query - now includes content_text for snippet extraction
 	query := `
@@ -1983,9 +2032,7 @@ func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*m
 
 // SearchRequests performs full-text search on request data
 func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, limit, offset int, after, before string) (*model.RequestSearchResults, error) {
-	// Build FTS5 query - convert user input to OR logic for multi-term searches
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
+	if strings.TrimSpace(query) == "" {
 		return &model.RequestSearchResults{
 			Query:   query,
 			Results: []*model.RequestSearchResult{},
@@ -1995,14 +2042,7 @@ func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, 
 		}, nil
 	}
 
-	// Escape FTS5 special characters and build OR query
-	var escapedTerms []string
-	for _, term := range terms {
-		// Escape double quotes by doubling them
-		escaped := strings.ReplaceAll(term, `"`, `""`)
-		escapedTerms = append(escapedTerms, fmt.Sprintf(`"%s"`, escaped))
-	}
-	ftsQuery := strings.Join(escapedTerms, " OR ")
+	ftsQuery := buildFTS5Query(query)
 
 	// Build the main query - count distinct requests matching FTS
 	countQuery := `
@@ -2605,19 +2645,11 @@ func (s *SQLiteStorageService) SaveExtension(ext *model.Extension) error {
 
 // SearchExtensions performs full-text search on extensions
 func (s *SQLiteStorageService) SearchExtensions(query string, extType, source string, limit, offset int, after, before string) ([]*model.ExtensionSearchResult, int, error) {
-	// Build FTS5 query - convert user input to OR logic
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
+	if strings.TrimSpace(query) == "" {
 		return []*model.ExtensionSearchResult{}, 0, nil
 	}
 
-	// Escape FTS5 special characters and build OR query
-	var escapedTerms []string
-	for _, term := range terms {
-		escaped := strings.ReplaceAll(term, `"`, `""`)
-		escapedTerms = append(escapedTerms, fmt.Sprintf(`"%s"`, escaped))
-	}
-	ftsQuery := strings.Join(escapedTerms, " OR ")
+	ftsQuery := buildFTS5Query(query)
 
 	// Get total count
 	countQuery := `
@@ -3664,19 +3696,11 @@ func (s *SQLiteStorageService) GetTodosBySession(sessionID string) ([]*model.Tod
 
 // SearchTodos performs full-text search on todos
 func (s *SQLiteStorageService) SearchTodos(query, status string, limit, offset int, after, before string) ([]*model.TodoSearchResult, int, error) {
-	// Build FTS5 query - convert user input to OR logic
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
+	if strings.TrimSpace(query) == "" {
 		return []*model.TodoSearchResult{}, 0, nil
 	}
 
-	// Escape FTS5 special characters and build OR query
-	var escapedTerms []string
-	for _, term := range terms {
-		escaped := strings.ReplaceAll(term, `"`, `""`)
-		escapedTerms = append(escapedTerms, fmt.Sprintf(`"%s"`, escaped))
-	}
-	ftsQuery := strings.Join(escapedTerms, " OR ")
+	ftsQuery := buildFTS5Query(query)
 
 	// Get total count
 	countQuery := `
@@ -3819,19 +3843,11 @@ func (s *SQLiteStorageService) GetAllPlans() ([]*model.Plan, error) {
 
 // SearchPlans performs full-text search on plans
 func (s *SQLiteStorageService) SearchPlans(query, status string, limit, offset int, after, before string) ([]*model.PlanSearchResult, int, error) {
-	// Build FTS5 query - convert user input to OR logic
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
+	if strings.TrimSpace(query) == "" {
 		return []*model.PlanSearchResult{}, 0, nil
 	}
 
-	// Escape FTS5 special characters and build OR query
-	var escapedTerms []string
-	for _, term := range terms {
-		escaped := strings.ReplaceAll(term, `"`, `""`)
-		escapedTerms = append(escapedTerms, fmt.Sprintf(`"%s"`, escaped))
-	}
-	ftsQuery := strings.Join(escapedTerms, " OR ")
+	ftsQuery := buildFTS5Query(query)
 
 	// Get total count
 	countQuery := `

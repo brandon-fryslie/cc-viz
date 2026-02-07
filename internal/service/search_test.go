@@ -150,8 +150,8 @@ func TestSearchConversations(t *testing.T) {
 		t.Logf("✅ Found %d conversations matching 'authentication'", results.Total)
 	})
 
-	// Test 2: Multi-term search (OR logic)
-	t.Run("multi-term search", func(t *testing.T) {
+	// Test 2: Multi-term search (AND logic) - all words must match
+	t.Run("multi-term search AND", func(t *testing.T) {
 		results, err := storage.SearchConversations(model.SearchOptions{
 			Query:  "authentication bug",
 			Limit:  50,
@@ -162,15 +162,15 @@ func TestSearchConversations(t *testing.T) {
 			t.Fatalf("SearchConversations failed: %v", err)
 		}
 
-		// Should match all 3 conversations (OR logic):
-		// - conv-1: matches "authentication"
-		// - conv-2: matches "bug"
-		// - conv-3: matches both "authentication" and "bug"
-		if results.Total < 3 {
-			t.Errorf("Expected at least 3 results for 'authentication bug' (OR logic), got %d", results.Total)
+		// Should match only conv-3 (AND logic):
+		// - conv-1: has "authentication" but not "bug"
+		// - conv-2: has "bug" but not "authentication"
+		// - conv-3: has both "authentication" and "bug"
+		if results.Total != 1 {
+			t.Errorf("Expected 1 result for 'authentication bug' (AND logic), got %d", results.Total)
 		}
 
-		t.Logf("✅ Found %d conversations matching 'authentication bug' (OR logic)", results.Total)
+		t.Logf("Found %d conversations matching 'authentication bug' (AND logic)", results.Total)
 	})
 
 	// Test 3: Empty query
