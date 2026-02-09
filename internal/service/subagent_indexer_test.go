@@ -10,8 +10,6 @@ import (
 )
 
 func TestSubagentIndexer_FindParentAgentID(t *testing.T) {
-	// Test that findParentAgentID returns nil for all subagents
-	// (since we have a flat hierarchy where all subagents are children of the root session)
 	tmpDB := filepath.Join(t.TempDir(), "test.db")
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
@@ -30,46 +28,95 @@ func TestSubagentIndexer_FindParentAgentID(t *testing.T) {
 		t.Fatalf("Failed to create indexer: %v", err)
 	}
 
-	// Test with various message patterns
+	// Set up a fake session directory structure:
+	//   {tmpDir}/session-123.jsonl          <- parent
+	//   {tmpDir}/session-123/subagents/agent-abc.jsonl
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "session-123")
+	subagentsDir := filepath.Join(sessionDir, "subagents")
+	if err := os.MkdirAll(subagentsDir, 0o755); err != nil {
+		t.Fatalf("Failed to create subagents dir: %v", err)
+	}
+
+	agentFile := filepath.Join(subagentsDir, "agent-abc.jsonl")
+	if err := os.WriteFile(agentFile, []byte(`{"agentId":"abc"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("Failed to write agent file: %v", err)
+	}
+
 	testCases := []struct {
-		name     string
-		messages []SubagentMessage
-		wantNil  bool
+		name        string
+		parentData  string // Content of the parent JSONL
+		siblingData string // Content of a sibling subagent file (optional)
+		agentID     string
+		wantNil     bool
+		wantParent  string // Expected parent agent ID (if not nil)
 	}{
 		{
-			name: "messages with parentUuid",
-			messages: []SubagentMessage{
-				{UUID: "msg-1", ParentUUID: nil},
-				{UUID: "msg-2", ParentUUID: strPtr("parent-uuid-123")},
-			},
-			wantNil: true, // Should return nil since we use flat hierarchy
+			name: "root-spawned agent",
+			parentData: `{"agentId":"","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"Done.\nagentId: abc (internal ID)"}]}]}}` + "\n",
+			agentID:    "abc",
+			wantNil:    true, // Root spawned → nil
 		},
 		{
-			name: "messages without parentUuid",
-			messages: []SubagentMessage{
-				{UUID: "msg-1", ParentUUID: nil},
-				{UUID: "msg-2", ParentUUID: nil},
-			},
-			wantNil: true,
+			name: "nested agent spawned by parent-xyz",
+			parentData: `{"agentId":"parent-xyz","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"Result\nagentId: abc (internal)"}]}]}}` + "\n",
+			agentID:    "abc",
+			wantNil:    false,
+			wantParent: "parent-xyz",
 		},
 		{
-			name:     "empty messages",
-			messages: []SubagentMessage{},
-			wantNil:  true,
+			name:       "agent not found in parent JSONL",
+			parentData: `{"agentId":"","type":"user","message":{"role":"user","content":"hello"}}` + "\n",
+			agentID:    "abc",
+			wantNil:    true, // Not found → nil
+		},
+		{
+			name:       "compact agent returns nil",
+			parentData: `{"agentId":"","type":"user","message":{"role":"user","content":"hello"}}` + "\n",
+			agentID:    "compact-123",
+			wantNil:    true, // Compact agents have no parent
+		},
+		{
+			name:        "nested agent spawned by sibling",
+			parentData:  `{"agentId":"","type":"user","message":{"role":"user","content":"hello"}}` + "\n",
+			siblingData: `{"agentId":"sibling-agent","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"Spawned\nagentId: nested-abc (internal)"}]}]}}` + "\n",
+			agentID:     "nested-abc",
+			wantNil:     false,
+			wantParent:  "sibling-agent",
 		},
 	}
 
+	parentJSONL := filepath.Join(tmpDir, "session-123.jsonl")
+	siblingFile := filepath.Join(subagentsDir, "agent-sibling.jsonl")
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			parentID, err := indexer.findParentAgentID(tc.messages)
+			if err := os.WriteFile(parentJSONL, []byte(tc.parentData), 0o644); err != nil {
+				t.Fatalf("Failed to write parent JSONL: %v", err)
+			}
+
+			// Write sibling file if test case provides it
+			if tc.siblingData != "" {
+				if err := os.WriteFile(siblingFile, []byte(tc.siblingData), 0o644); err != nil {
+					t.Fatalf("Failed to write sibling file: %v", err)
+				}
+				defer os.Remove(siblingFile)
+			}
+
+			parentID, err := indexer.findParentAgentID(tc.agentID, agentFile)
 			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+				t.Fatalf("Unexpected error: %v", err)
 			}
 			if tc.wantNil && parentID != nil {
-				t.Errorf("Expected nil parent_agent_id for flat hierarchy, got %v", *parentID)
+				t.Errorf("Expected nil parent, got %q", *parentID)
 			}
-			if !tc.wantNil && parentID == nil {
-				t.Error("Expected non-nil parent_agent_id")
+			if !tc.wantNil {
+				if parentID == nil {
+					t.Fatalf("Expected parent %q, got nil", tc.wantParent)
+				}
+				if *parentID != tc.wantParent {
+					t.Errorf("Expected parent %q, got %q", tc.wantParent, *parentID)
+				}
 			}
 		})
 	}

@@ -202,8 +202,8 @@ func (si *SubagentIndexer) indexFile(filePath string) error {
 	spawnTime, _ := time.Parse(time.RFC3339, firstMsg.Timestamp)
 	endTime, _ := time.Parse(time.RFC3339, lastMsg.Timestamp)
 
-	// Find parent agent using First Message Rule
-	parentAgentID, err := si.findParentAgentID(messages)
+	// Find parent agent by scanning the parent session JSONL
+	parentAgentID, err := si.findParentAgentID(agentID, filePath)
 	if err != nil {
 		log.Printf("⚠️ Error finding parent for %s: %v", filePath, err)
 		// Continue with NULL parent
@@ -246,16 +246,110 @@ func (si *SubagentIndexer) indexFile(filePath string) error {
 	return nil
 }
 
-// findParentAgentID determines the parent agent for a subagent.
-// Based on data investigation, subagents are stored in {session}/subagents/ directories
-// and the main session (agentId=null) is the parent of all subagents in that session.
-// This creates a flat hierarchy where all subagents have parent_agent_id = NULL,
-// indicating the root session is their parent.
-func (si *SubagentIndexer) findParentAgentID(messages []SubagentMessage) (*string, error) {
-	// All subagents are direct children of the main session (which has no agent_id).
-	// Return nil to indicate the parent is the root session.
-	// Note: If Claude Code later supports nested subagent spawning, this logic
-	// would need to be updated to detect which agent spawned which.
+// searchFileForParent scans a JSONL file for a line containing "agentId: {targetID}"
+// and returns the outer agentId field (the spawning agent). Returns nil if not found
+// or if the spawning agent is the root session (empty agentId).
+func (si *SubagentIndexer) searchFileForParent(filePath, targetID string) (*string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	needle := "agentId: " + targetID
+
+	scanner := bufio.NewScanner(file)
+	const maxScanTokenSize = 64 * 1024 * 1024
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, maxScanTokenSize)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		// Fast text check before JSON parsing — skip lines that can't match.
+		if !strings.Contains(string(line), needle) {
+			continue
+		}
+
+		// Parse to extract the outer agentId field (the spawning agent).
+		var envelope struct {
+			AgentID string `json:"agentId"`
+		}
+		if err := json.Unmarshal(line, &envelope); err != nil {
+			continue
+		}
+
+		// Empty agentId means root session → return nil (no parent agent).
+		if envelope.AgentID == "" {
+			return nil, nil
+		}
+
+		// Non-empty agentId means a nested agent spawned this one.
+		parentID := envelope.AgentID
+		return &parentID, nil
+	}
+
+	// Not found in this file.
+	return nil, nil
+}
+
+// findParentAgentID determines which agent spawned agentID by scanning the
+// parent JSONL file and sibling subagent files. When any agent calls the Task tool,
+// the tool_result content contains "agentId: {spawned_id}". The outer "agentId" JSON
+// field on that line identifies the spawning (parent) agent.
+//
+// File layout:
+//
+//	{session-id}.jsonl                  ← root session
+//	{session-id}/subagents/agent-{id}.jsonl
+//
+// Returns nil when the parent is the root session (agentId "" or not found).
+func (si *SubagentIndexer) findParentAgentID(agentID string, filePath string) (*string, error) {
+	// [LAW:dataflow-not-control-flow] Early return for compact agents - they're auto-generated, no parent
+	if strings.Contains(agentID, "compact") {
+		return nil, nil
+	}
+
+	// Derive parent JSONL: filePath → …/{session}/subagents/agent-X.jsonl
+	// We need …/{session}.jsonl
+	subagentsDir := filepath.Dir(filePath)             // …/{session}/subagents
+	sessionDir := filepath.Dir(subagentsDir)           // …/{session}
+	sessionID := filepath.Base(sessionDir)             // {session-id}
+	parentJSONL := filepath.Join(filepath.Dir(sessionDir), sessionID+".jsonl")
+
+	// Phase 1: Search parent session JSONL
+	if parentID, err := si.searchFileForParent(parentJSONL, agentID); err == nil && parentID != nil {
+		return parentID, nil
+	}
+
+	// Phase 2: If not found in root session, scan sibling subagent files
+	// The parent might be another subagent in the same session
+	entries, err := os.ReadDir(subagentsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read subagents directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		siblingPath := filepath.Join(subagentsDir, entry.Name())
+		// Skip self
+		if siblingPath == filePath {
+			continue
+		}
+
+		// Only scan agent-*.jsonl files
+		if !strings.HasPrefix(entry.Name(), "agent-") || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+
+		if parentID, err := si.searchFileForParent(siblingPath, agentID); err == nil && parentID != nil {
+			return parentID, nil
+		}
+	}
+
+	// Not found in parent or siblings — treat as root-spawned.
 	return nil, nil
 }
 

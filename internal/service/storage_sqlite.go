@@ -3351,6 +3351,31 @@ func (s *SQLiteStorageService) UpsertSessionsForConversation(conversationID stri
 		return fmt.Errorf("failed to upsert session_conversation_map: %w", err)
 	}
 
+	// [LAW:single-enforcer] Update aggregate fields (conversation_count, agent_count, todo_count)
+	// derived from related tables. This ensures the sessions table has complete metadata.
+	_, err = s.db.Exec(`
+		UPDATE sessions SET
+			conversation_count = (
+				SELECT COUNT(*) FROM session_conversation_map
+				WHERE session_id = sessions.id
+			),
+			agent_count = (
+				SELECT COUNT(*) FROM subagent_graph
+				WHERE session_id = sessions.id
+			),
+			todo_count = (
+				SELECT COUNT(*) FROM claude_todos
+				WHERE session_uuid = sessions.id
+			)
+		WHERE id IN (
+			SELECT DISTINCT session_id FROM conversation_messages
+			WHERE conversation_id = ? AND session_id IS NOT NULL AND session_id != ''
+		)
+	`, conversationID)
+	if err != nil {
+		return fmt.Errorf("failed to update session aggregates: %w", err)
+	}
+
 	return nil
 }
 
