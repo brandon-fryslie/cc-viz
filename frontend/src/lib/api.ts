@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { ConversationsArraySchema, validateApiResponse } from './schemas'
 import type {
   RequestSummary,
   RequestLog,
@@ -275,11 +276,16 @@ export function useRoutingStats(params?: StatsParams) {
 // Conversation Queries
 // ============================================================================
 
-// V2 API returns array directly
-export function useConversations() {
+// V2 API returns array directly - validated at runtime
+// Default limit increased to 1000 to capture all conversations for accurate stats
+export function useConversations(options?: { limit?: number }) {
+  const limit = options?.limit ?? 1000
   return useQuery({
-    queryKey: ['conversations'],
-    queryFn: () => fetchAPI<Conversation[]>('/conversations'),
+    queryKey: ['conversations', limit],
+    queryFn: async () => {
+      const data = await fetchAPI<unknown>(`/conversations?limit=${limit}`)
+      return validateApiResponse(ConversationsArraySchema, data, '/conversations')
+    },
   })
 }
 

@@ -110,27 +110,6 @@ func main() {
 		logger.Printf("Plan-session links created: %d relationships", planLinkCount)
 	}
 
-	// Queue watcher is mandatory - fail if queue directory not configured
-	if cfg.Queue.Directory == "" {
-		logger.Fatalf("Queue directory not configured. Set queue.directory in config.yaml")
-	}
-
-	queueWatcher, err := service.NewQueueWatcher(
-		cfg.Queue.Directory,
-		cfg.Queue.DeadLetterDir,
-		sqliteStorage,
-		logger,
-	)
-	if err != nil {
-		logger.Fatalf("Failed to create queue watcher: %v", err)
-	}
-
-	if err := queueWatcher.Start(); err != nil {
-		logger.Fatalf("Failed to start queue watcher: %v", err)
-	}
-	defer queueWatcher.Stop()
-	logger.Printf("Queue watcher started, monitoring: %s", cfg.Queue.Directory)
-
 	// Create data handler (full dependencies)
 	h := handler.NewDataHandler(storageService, logger, cfg)
 	h.SetIndexer(indexer)
@@ -148,21 +127,10 @@ func main() {
 	// Health check
 	r.HandleFunc("/health", h.Health).Methods("GET")
 
-	// V1 API - Request endpoints
-	r.HandleFunc("/api/requests", h.GetRequests).Methods("GET")
-	r.HandleFunc("/api/requests/summary", h.GetRequestsSummary).Methods("GET")
-	r.HandleFunc("/api/requests/latest-date", h.GetLatestRequestDate).Methods("GET")
-	r.HandleFunc("/api/requests/{id}", h.GetRequestByID).Methods("GET")
-	r.HandleFunc("/api/requests", h.DeleteRequests).Methods("DELETE")
-
 	// V1 API - Stats endpoints
 	r.HandleFunc("/api/stats", h.GetStats).Methods("GET")
 	r.HandleFunc("/api/stats/hourly", h.GetHourlyStats).Methods("GET")
 	r.HandleFunc("/api/stats/models", h.GetModelStats).Methods("GET")
-	r.HandleFunc("/api/stats/providers", h.GetProviderStats).Methods("GET")
-	r.HandleFunc("/api/stats/subagents", h.GetSubagentStats).Methods("GET")
-	r.HandleFunc("/api/stats/tools", h.GetToolStats).Methods("GET")
-	r.HandleFunc("/api/stats/performance", h.GetPerformanceStats).Methods("GET")
 
 	// V1 API - Conversation endpoints (specific routes before parameterized)
 	r.HandleFunc("/api/conversations", h.GetConversations).Methods("GET")
@@ -172,9 +140,6 @@ func main() {
 
 	// V2 API - cleaner response format for new dashboard
 	r.HandleFunc("/api/v2/search", h.SearchUnifiedV2).Methods("GET")
-	r.HandleFunc("/api/v2/requests/search", h.SearchRequestsV2).Methods("GET")
-	r.HandleFunc("/api/v2/requests/summary", h.GetRequestsSummaryV2).Methods("GET")
-	r.HandleFunc("/api/v2/requests/{id}", h.GetRequestByIDV2).Methods("GET")
 	r.HandleFunc("/api/v2/conversations", h.GetConversationsV2).Methods("GET")
 	r.HandleFunc("/api/v2/conversations/search", h.SearchConversations).Methods("GET")
 	r.HandleFunc("/api/v2/conversations/reindex", h.ReindexConversationsV2).Methods("POST")
@@ -189,9 +154,6 @@ func main() {
 	r.HandleFunc("/api/v2/stats", h.GetWeeklyStatsV2).Methods("GET")
 	r.HandleFunc("/api/v2/stats/hourly", h.GetHourlyStatsV2).Methods("GET")
 	r.HandleFunc("/api/v2/stats/models", h.GetModelStatsV2).Methods("GET")
-	r.HandleFunc("/api/v2/stats/providers", h.GetProvidersV2).Methods("GET")
-	r.HandleFunc("/api/v2/stats/subagents", h.GetSubagentStatsV2).Methods("GET")
-	r.HandleFunc("/api/v2/stats/performance", h.GetPerformanceStatsV2).Methods("GET")
 
 	// V2 Configuration API
 	r.HandleFunc("/api/v2/config", h.GetConfigV2).Methods("GET")

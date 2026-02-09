@@ -321,6 +321,12 @@ func (ci *ConversationIndexer) indexFile(filePath string) error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	// Incrementally populate sessions table for this conversation.
+	// Non-fatal: sessions are a derived view, not a primary data source.
+	if err := ci.storage.UpsertSessionsForConversation(conv.SessionID); err != nil {
+		log.Printf("⚠️  Error upserting sessions for %s: %v", conv.SessionID, err)
+	}
+
 	return nil
 }
 

@@ -12,7 +12,6 @@ import {
   useTodos,
   usePlans,
   formatTokens,
-  getTodayDateRange,
 } from '@/lib/api'
 import {
   Activity,
@@ -58,22 +57,20 @@ export function MissionControlPage() {
   // Calculate stats
   const stats = useMemo(() => {
     const now = new Date()
-    const today = getTodayDateRange()
-    const todayConversations = conversations.filter((c) => {
+
+    // Use rolling 24-hour periods for meaningful comparison
+    // "Last 24h" vs "Previous 24h" gives apples-to-apples comparison
+    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const prev48h = new Date(now.getTime() - 48 * 60 * 60 * 1000)
+
+    const last24hConversations = conversations.filter((c) => {
       const convDate = new Date(c.lastActivity)
-      return convDate >= new Date(today.start) && convDate <= new Date(today.end)
+      return convDate >= last24h && convDate <= now
     })
 
-    // Get yesterday's data for trend calculation
-    const yesterday = new Date(now)
-    yesterday.setDate(yesterday.getDate() - 1)
-    const yesterdayRange = getTodayDateRange()
-    yesterdayRange.start = new Date(yesterday.setHours(0, 0, 0, 0)).toISOString()
-    yesterdayRange.end = new Date(yesterday.setHours(23, 59, 59, 999)).toISOString()
-
-    const yesterdayConversations = conversations.filter((c) => {
+    const prev24hConversations = conversations.filter((c) => {
       const convDate = new Date(c.lastActivity)
-      return convDate >= new Date(yesterdayRange.start) && convDate <= new Date(yesterdayRange.end)
+      return convDate >= prev48h && convDate < last24h
     })
 
     // Last 7 days
@@ -93,16 +90,16 @@ export function MissionControlPage() {
     const totalSessions = last7DaysConversations.length || 1
     const avgTokensPerSession = Math.round(totalTokens / totalSessions)
 
-    // Calculate trends
-    const sessionsTrend = yesterdayConversations.length > 0
-      ? ((todayConversations.length - yesterdayConversations.length) / yesterdayConversations.length) * 100
-      : todayConversations.length > 0 ? 100 : 0
+    // Calculate trends (rolling 24h comparison)
+    const sessionsTrend = prev24hConversations.length > 0
+      ? ((last24hConversations.length - prev24hConversations.length) / prev24hConversations.length) * 100
+      : last24hConversations.length > 0 ? 100 : 0
 
     const conversationsTrend = 15.3 // Placeholder - would need historical data
     const tokensTrend = 8.7 // Placeholder - would need historical data
 
     return {
-      sessionsToday: todayConversations.length,
+      sessionsLast24h: last24hConversations.length,
       sessionsTrend,
       conversationsTotal: last7DaysConversations.length,
       conversationsTrend,
@@ -280,9 +277,9 @@ export function MissionControlPage() {
         {/* Top Row: Stat Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            title="Sessions Today"
-            value={stats.sessionsToday}
-            trend={{ value: stats.sessionsTrend, label: 'vs yesterday' }}
+            title="Sessions (24h)"
+            value={stats.sessionsLast24h}
+            trend={{ value: stats.sessionsTrend, label: 'vs prev 24h' }}
             icon={<Activity className="w-5 h-5" />}
           />
           <StatCard

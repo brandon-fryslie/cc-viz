@@ -1,12 +1,13 @@
 import { useState, useMemo, useCallback, useRef } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { AppLayout } from '@/components/layout'
 import { MessageSquare, ArrowUpDown, Search } from 'lucide-react'
 import { useConversations, useConversationDetail, useConversationMessages, useSearchConversations } from '@/lib/api'
 import type { ConversationDetail, DBConversationMessage } from '@/lib/types'
 import { ConversationThread } from '@/components/features/ConversationThread'
-import { ConversationSearch } from '@/components/features/ConversationSearch'
 import { ConversationList } from '@/components/features/ConversationList'
 import { useSearchHighlight } from '@/lib/useSearchHighlight'
+import { useSearch } from '@/lib/SearchContext'
 
 type SortOption = 'recent' | 'project' | 'messages'
 
@@ -165,8 +166,15 @@ function DBMessagesView({ messages }: { messages: DBConversationMessage[] }) {
 }
 
 export function ConversationsPage() {
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
+  const navigate = useNavigate()
+  const { query: searchQuery } = useSearch()
+
+  // Read conversation ID from URL path (/conversations/$id)
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(() => {
+    const match = window.location.pathname.match(/^\/conversations\/(.+?)(?:\?|$)/)
+    return match ? decodeURIComponent(match[1]) : null
+  })
+
   const [sortBy, setSortBy] = useState<SortOption>('recent')
   const [conversationDetailsCache] = useState<Map<string, ConversationDetail>>(
     new Map()
@@ -177,10 +185,11 @@ export function ConversationsPage() {
   // Use backend FTS search when query is 2+ chars
   const { data: searchResults, isLoading: isSearching } = useSearchConversations(searchQuery)
 
-  // Update cache when a conversation detail is loaded
+  // Navigate to the conversation URL when selecting from the list
   const handleConversationSelect = useCallback((id: string) => {
     setSelectedConversationId(id)
-  }, [])
+    navigate({ to: '/conversations/$id', params: { id } })
+  }, [navigate])
 
   // Sort conversations
   const sortedConversations = useMemo(() => {
@@ -253,13 +262,8 @@ export function ConversationsPage() {
       <div className="flex-1 flex overflow-hidden h-full">
         {/* Left Sidebar - Conversation List */}
         <div className="w-80 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col">
-          {/* Search and Sort */}
-          <div className="p-3 border-b border-[var(--color-border)] space-y-2">
-            <ConversationSearch
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search all conversations..."
-            />
+          {/* Sort Controls */}
+          <div className="p-3 border-b border-[var(--color-border)]">
             <div className="flex items-center justify-between">
               <span className="text-xs text-[var(--color-text-muted)]">
                 {isSearching ? (

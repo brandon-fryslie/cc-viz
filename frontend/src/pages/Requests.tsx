@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { PageHeader } from '@/components/layout'
 import { ResizablePanel, PanelGroup, Panel } from '@/components/layout'
 import { cn } from '@/lib/utils'
-import { ChevronRight, Clock, ArrowRight, Search, GitCompare, User, Bot, Filter } from 'lucide-react'
+import { ChevronRight, Clock, ArrowRight, GitCompare, User, Bot, Filter } from 'lucide-react'
 import { useRequestsSummary, useRequestDetail, useSearchRequests, formatDuration, clearAllRequests } from '@/lib/api'
 import { useQueryClient } from '@tanstack/react-query'
 import type { RequestSummary as RequestSummaryType, RequestLog, RequestSearchResult } from '@/lib/types'
@@ -12,6 +12,7 @@ import { RequestCompareModal } from '@/components/features/RequestCompareModal'
 import { DataManagementBar } from '@/components/features/DataManagementBar'
 import { MessageContent } from '@/components/ui'
 import { useSearchHighlight } from '@/lib/useSearchHighlight'
+import { useSearch } from '@/lib/SearchContext'
 
 interface CompareState {
   enabled: boolean
@@ -240,8 +241,8 @@ function RequestDetail({ requestId }: { requestId: string | null }) {
 }
 
 export function RequestsPage() {
+  const { query: searchQuery } = useSearch()
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
 
   // Initialize model filter from URL parameter
   const [modelFilter, setModelFilterState] = useState<string>(() => {
@@ -452,16 +453,6 @@ export function RequestsPage() {
               <ChevronRight
                 size={12}
                 className="absolute right-2 top-1/2 -translate-y-1/2 rotate-90 text-[var(--color-text-muted)] pointer-events-none"
-              />
-            </div>
-            <div className="relative">
-              <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-              <input
-                type="text"
-                placeholder="Search requests..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-7 pr-3 py-1.5 text-sm bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-accent)]"
               />
             </div>
             <button

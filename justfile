@@ -6,15 +6,15 @@ default: build
 # Install dependencies
 install:
     go mod download
-    cd frontend && npm install
+    pnpm --filter ./frontend install --prod=false
 
 # Build the viz-server binary
 build:
     CGO_ENABLED=1 go build -tags fts5 -o bin/viz-server ./cmd/viz-server
 
 # Build with embedded frontend
-build-embedded:
-    cd frontend && npm run build
+build-embedded: install
+    pnpm --filter ./frontend run build
     rm -rf cmd/viz-server/viz-frontend-embed
     cp -r frontend/dist cmd/viz-server/viz-frontend-embed
     CGO_ENABLED=1 go build -tags "fts5 embed_frontend" -o bin/viz-server ./cmd/viz-server
@@ -28,8 +28,8 @@ run-embedded: build-embedded
     ./bin/viz-server
 
 # Run frontend dev server (for development with HMR)
-run-frontend-dev:
-    cd frontend && npm run dev
+run-frontend-dev: install
+    pnpm --filter ./frontend run dev
 
 # Run viz-server + frontend dev server in parallel
 dev:
@@ -45,11 +45,11 @@ test:
 
 # Run linter
 lint:
-    golangci-lint run
+    go run github.com/golangci/golangci-lint/cmd/golangci-lint@latest run
 
 # Check types in frontend
 typecheck:
-    cd frontend && npm run typecheck
+    pnpm --filter ./frontend run typecheck
 
 # Lint and typecheck
 check: lint typecheck
@@ -68,7 +68,7 @@ db:
 # Format code
 fmt:
     go fmt ./...
-    cd frontend && npm run format
+    pnpm --filter ./frontend run format
 
 # Show help
 help:

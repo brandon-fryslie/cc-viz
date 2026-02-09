@@ -1,9 +1,11 @@
 import { type FC, useMemo, useState, useRef, useEffect } from 'react'
-import { User, Bot, Clock, ChevronDown, ChevronUp, ArrowUp, ArrowDown, Search } from 'lucide-react'
+import { User, Bot, Clock, ChevronDown, ChevronUp, ArrowUp, ArrowDown } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ClaudeCodeMessage, AnthropicContentBlock } from '@/lib/types'
 import { filterMessages } from '@/lib/search'
 import { highlightMatches } from '@/lib/searchHighlight'
-import { ConversationSearch } from './ConversationSearch'
+import { useSearch } from '@/lib/SearchContext'
 
 interface ConversationThreadProps {
   messages: ClaudeCodeMessage[]
@@ -16,12 +18,14 @@ export const ConversationThread: FC<ConversationThreadProps> = ({
   startTime,
   endTime,
 }) => {
-  const [searchQuery, setSearchQuery] = useState('')
-  const [showSearch, setShowSearch] = useState(false)
+  const { query: searchQuery, scope } = useSearch()
   const [showJumpButtons, setShowJumpButtons] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesStartRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // Only filter when scope is 'this-session'
+  const shouldFilter = scope.kind === 'this-session'
 
   // Filter to only user/assistant messages with valid content
   const chatMessages = useMemo(() => {
@@ -29,8 +33,8 @@ export const ConversationThread: FC<ConversationThreadProps> = ({
       (m.type === 'user' || m.type === 'assistant') &&
       m.message?.content
     )
-    return searchQuery ? filterMessages(filtered, searchQuery) : filtered
-  }, [messages, searchQuery])
+    return (shouldFilter && searchQuery) ? filterMessages(filtered, searchQuery) : filtered
+  }, [messages, searchQuery, shouldFilter])
 
   // Count by role
   const stats = useMemo(() => {
@@ -84,27 +88,7 @@ export const ConversationThread: FC<ConversationThreadProps> = ({
               ({stats.userCount} user, {stats.assistantCount} assistant)
             </span>
           </div>
-
-          <button
-            onClick={() => setShowSearch(!showSearch)}
-            className="p-1.5 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
-            aria-label="Toggle search"
-          >
-            <Search size={16} className="text-[var(--color-text-muted)]" />
-          </button>
         </div>
-
-        {/* Search bar */}
-        {showSearch && (
-          <div className="mt-2">
-            <ConversationSearch
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search messages..."
-              autoFocus
-            />
-          </div>
-        )}
       </div>
 
       {/* Message list */}
@@ -114,7 +98,7 @@ export const ConversationThread: FC<ConversationThreadProps> = ({
           <MessageBubble
             key={msg.uuid || idx}
             message={msg}
-            searchQuery={searchQuery}
+            searchQuery={shouldFilter ? searchQuery : ''}
           />
         ))}
         <div ref={messagesEndRef} />
@@ -179,7 +163,7 @@ const MessageBubble: FC<MessageBubbleProps> = ({ message, searchQuery }) => {
             {formatTimestamp(message.timestamp)}
           </span>
         </div>
-        <div className="prose prose-sm max-w-none dark:prose-invert">
+        <div className="prose prose-base max-w-none dark:prose-invert" style={{ fontFamily: "'Inter', 'SF Pro Text', -apple-system, BlinkMacSystemFont, sans-serif" }}>
           <MessageContent content={content} searchQuery={searchQuery} />
         </div>
       </div>
@@ -192,15 +176,43 @@ interface MessageContentProps {
   searchQuery: string
 }
 
+function MarkdownText({ text, searchQuery }: { text: string; searchQuery: string }) {
+  if (searchQuery) {
+    return (
+      <div className="whitespace-pre-wrap">
+        {highlightMatches(text, searchQuery)}
+      </div>
+    )
+  }
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        // Keep code blocks styled with monospace
+        code: ({ children, className, ...props }) => {
+          const isBlock = className?.startsWith('language-')
+          return isBlock ? (
+            <code className={`${className} text-[0.8em]`} {...props}>{children}</code>
+          ) : (
+            <code className="px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[0.85em] font-mono" {...props}>{children}</code>
+          )
+        },
+        pre: ({ children, ...props }) => (
+          <pre className="overflow-auto rounded-md bg-[var(--color-bg-tertiary)] p-3 text-[0.85em] font-mono" {...props}>{children}</pre>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  )
+}
+
 const MessageContent: FC<MessageContentProps> = ({ content, searchQuery }) => {
   if (!content) return <span className="text-[var(--color-text-muted)]">No content</span>
 
   if (typeof content === 'string') {
-    return (
-      <div className="text-sm text-[var(--color-text-primary)] whitespace-pre-wrap">
-        {searchQuery ? highlightMatches(content, searchQuery) : content}
-      </div>
-    )
+    return <MarkdownText text={content} searchQuery={searchQuery} />
   }
 
   if (Array.isArray(content)) {
@@ -209,9 +221,7 @@ const MessageContent: FC<MessageContentProps> = ({ content, searchQuery }) => {
         {content.map((block, i) => (
           <div key={i}>
             {block.type === 'text' && block.text && (
-              <div className="text-sm text-[var(--color-text-primary)] whitespace-pre-wrap">
-                {searchQuery ? highlightMatches(block.text, searchQuery) : block.text}
-              </div>
+              <MarkdownText text={block.text} searchQuery={searchQuery} />
             )}
             {block.type === 'tool_use' && (
               <CollapsibleToolUse block={block} searchQuery={searchQuery} />

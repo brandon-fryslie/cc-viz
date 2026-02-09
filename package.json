@@ -1,0 +1,11 @@
+{
+  "name": "cc-viz",
+  "private": true,
+  "packageManager": "pnpm@10.26.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "nuqs": "^2.8.8"
+  }
+}

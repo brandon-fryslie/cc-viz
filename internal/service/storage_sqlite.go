@@ -1566,14 +1566,27 @@ func (s *SQLiteStorageService) GetHourlyStats(startTime, endTime string) (*model
 
 // GetModelStats returns model breakdown for a specific time range - uses SQL aggregation
 func (s *SQLiteStorageService) GetModelStats(startTime, endTime string) (*model.ModelStatsResponse, error) {
-	// SQL aggregation - no JSON parsing needed
+	// [LAW:one-source-of-truth] Query conversation_messages, deduplicating by request_id.
+	// Same pattern as GetStats: each streaming response has multiple JSONL entries with
+	// identical usage data, so we take MAX per request_id to count tokens only once.
 	query := `
 		SELECT
 			COALESCE(model, 'unknown') as model,
 			COUNT(*) as requests,
 			SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_creation_tokens, 0)) as tokens
-		FROM requests
-		WHERE timestamp >= ? AND timestamp < ?
+		FROM (
+			SELECT
+				COALESCE(request_id, uuid) as dedup_key,
+				MAX(model) as model,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens
+			FROM conversation_messages
+			WHERE timestamp >= ? AND timestamp < ?
+				AND role IN ('user', 'assistant')
+			GROUP BY dedup_key
+		)
 		GROUP BY model
 		ORDER BY tokens DESC
 	`

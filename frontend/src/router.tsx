@@ -1,9 +1,10 @@
 import { createRouter, createRootRoute, createRoute, Outlet, useNavigate } from '@tanstack/react-router'
+import { NuqsAdapter } from 'nuqs/adapters/react'
 import { useState, useEffect } from 'react'
-import { Sidebar, GlobalDatePicker } from '@/components/layout'
-import { UnifiedSearchModal } from '@/components/UnifiedSearchModal'
+import { Sidebar, GlobalDatePicker, SearchBar } from '@/components/layout'
 import { DateRangeProvider } from '@/lib/DateRangeContext'
 import { ThemeProvider } from '@/lib/ThemeContext'
+import { SearchProvider } from '@/lib/SearchContext'
 
 // Home page
 import { HomePage } from '@/pages/Home'
@@ -38,6 +39,10 @@ import { SettingsPage } from '@/pages/Settings'
 // Claude Config
 import { ClaudeConfigPage } from '@/pages/ClaudeConfig'
 
+// V2 Pages (Mantine)
+import { V2Layout } from '@/mantine/layout'
+import { V2HomePage } from '@/pages-v2/V2Home'
+
 // Root route with layout
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -46,7 +51,6 @@ const rootRoute = createRootRoute({
 function RootLayout() {
   const navigate = useNavigate()
   const [activeItem, setActiveItem] = useState('')
-  const [isSearchOpen, setIsSearchOpen] = useState(false)
 
   // Sync active item with current route
   useEffect(() => {
@@ -55,41 +59,31 @@ function RootLayout() {
     setActiveItem(item.split('/')[0]) // Get first segment for nested routes
   }, [])
 
-  // Handle global search keyboard shortcut
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'K') {
-        e.preventDefault()
-        setIsSearchOpen(!isSearchOpen)
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isSearchOpen])
-
   const handleItemSelect = (id: string) => {
     setActiveItem(id)
     navigate({ to: `/${id}` })
   }
 
   return (
-    <ThemeProvider>
-      <DateRangeProvider>
-        <div className="flex h-screen overflow-hidden bg-[var(--color-bg-primary)]">
-          <Sidebar activeItem={activeItem} onItemSelect={handleItemSelect} />
-          <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-            {/* Global date picker header */}
-            <div className="flex items-center justify-end h-10 px-4 border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">
-              <GlobalDatePicker />
+    <NuqsAdapter>
+      <ThemeProvider>
+        <DateRangeProvider>
+          <SearchProvider>
+            <div className="flex h-screen overflow-hidden bg-[var(--color-bg-primary)]">
+              <Sidebar activeItem={activeItem} onItemSelect={handleItemSelect} />
+              <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+                {/* Global search bar + date picker header */}
+                <div className="flex items-center justify-between gap-4 h-10 px-4 border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">
+                  <SearchBar />
+                  <GlobalDatePicker />
+                </div>
+                <Outlet />
+              </main>
             </div>
-            <Outlet />
-          </main>
-          {/* Unified Search Modal */}
-          <UnifiedSearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
-        </div>
-      </DateRangeProvider>
-    </ThemeProvider>
+          </SearchProvider>
+        </DateRangeProvider>
+      </ThemeProvider>
+    </NuqsAdapter>
   )
 }
 
@@ -218,6 +212,68 @@ const claudeConfigRoute = createRoute({
   component: ClaudeConfigPage,
 })
 
+// ============================================
+// V2 Routes (Mantine Dashboard)
+// ============================================
+
+// V2 parent route with Mantine layout
+const v2Route = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/v2',
+  component: V2Layout,
+})
+
+// V2 Home page
+const v2HomeRoute = createRoute({
+  getParentRoute: () => v2Route,
+  path: '/',
+  component: V2HomePage,
+})
+
+// V2 Token Economics (placeholder for now)
+const v2TokenEconomicsRoute = createRoute({
+  getParentRoute: () => v2Route,
+  path: '/token-economics',
+  component: () => (
+    <div style={{ padding: '20px' }}>
+      <h1>Token Economics v2</h1>
+      <p>Coming soon...</p>
+    </div>
+  ),
+})
+
+// V2 Mission Control (placeholder for now)
+const v2MissionControlRoute = createRoute({
+  getParentRoute: () => v2Route,
+  path: '/mission-control',
+  component: () => (
+    <div style={{ padding: '20px' }}>
+      <h1>Mission Control v2</h1>
+      <p>Coming soon...</p>
+    </div>
+  ),
+})
+
+// V2 Extension Workshop (placeholder for now)
+const v2ExtensionWorkshopRoute = createRoute({
+  getParentRoute: () => v2Route,
+  path: '/extension-workshop',
+  component: () => (
+    <div style={{ padding: '20px' }}>
+      <h1>Extension Workshop v2</h1>
+      <p>Coming soon...</p>
+    </div>
+  ),
+})
+
+// Create v2 route tree
+const v2RouteTree = v2Route.addChildren([
+  v2HomeRoute,
+  v2TokenEconomicsRoute,
+  v2MissionControlRoute,
+  v2ExtensionWorkshopRoute,
+])
+
 // Create route tree
 const routeTree = rootRoute.addChildren([
   homeRoute,
@@ -238,6 +294,8 @@ const routeTree = rootRoute.addChildren([
   plansSearchRoute,
   settingsRoute,
   claudeConfigRoute,
+  // V2 Dashboard routes
+  v2RouteTree,
 ])
 
 // Create router
