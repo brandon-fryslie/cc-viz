@@ -8,28 +8,20 @@ import (
 )
 
 type StorageService interface {
-	SaveRequest(request *model.RequestLog) (string, error)
-	GetRequests(page, limit int) ([]model.RequestLog, int, error)
-	ClearRequests() (int, error)
-	UpdateRequestWithGrading(requestID string, grade *model.PromptGrade) error
-	UpdateRequestWithResponse(request *model.RequestLog) error
-	EnsureDirectoryExists() error
-	GetRequestByShortID(shortID string) (*model.RequestLog, string, error)
-	GetConfig() *config.StorageConfig
-	GetAllRequests(modelFilter string) ([]*model.RequestLog, error)
-	GetRequestsSummary(modelFilter string) ([]*model.RequestSummary, error)
-	GetRequestsSummaryPaginated(modelFilter, startTime, endTime string, offset, limit int) ([]*model.RequestSummary, int, error)
+	RuntimeStorageService
+	LegacyRequestStorageService
+}
+
+// RuntimeStorageService is the storage contract required by the current runtime router.
+// [LAW:locality-or-seam] Keep runtime endpoints decoupled from legacy request ingestion APIs.
+type RuntimeStorageService interface {
+	// Core lifecycle
+	Close() error
+
+	// Dashboard analytics
 	GetStats(startDate, endDate string) (*model.DashboardStats, error)
 	GetHourlyStats(startTime, endTime string) (*model.HourlyStatsResponse, error)
 	GetModelStats(startTime, endTime string) (*model.ModelStatsResponse, error)
-	GetLatestRequestDate() (*time.Time, error)
-	Close() error
-
-	// New analytics endpoints
-	GetProviderStats(startTime, endTime string) (*model.ProviderStatsResponse, error)
-	GetSubagentStats(startTime, endTime string) (*model.SubagentStatsResponse, error)
-	GetToolStats(startTime, endTime string) (*model.ToolStatsResponse, error)
-	GetPerformanceStats(startTime, endTime string) (*model.PerformanceStatsResponse, error)
 
 	// Conversation search
 	SearchConversations(opts model.SearchOptions) (*model.SearchResults, error)
@@ -103,4 +95,27 @@ type StorageService interface {
 	GetConversationTokenSummary(conversationID string) (*model.ConversationTokenSummary, error)
 	GetProjectTokenStats(startTime, endTime string) ([]*model.ProjectTokenStat, error)
 	GetIndexedConversationsWithTokens(limit int) ([]*model.IndexedConversationWithTokens, error)
+}
+
+// LegacyRequestStorageService contains request-log ingestion and compatibility methods.
+// [LAW:locality-or-seam] Keep deprecated request-ingestion APIs off the runtime contract.
+type LegacyRequestStorageService interface {
+	SaveRequest(request *model.RequestLog) (string, error)
+	GetRequests(page, limit int) ([]model.RequestLog, int, error)
+	ClearRequests() (int, error)
+	UpdateRequestWithGrading(requestID string, grade *model.PromptGrade) error
+	UpdateRequestWithResponse(request *model.RequestLog) error
+	EnsureDirectoryExists() error
+	GetRequestByShortID(shortID string) (*model.RequestLog, string, error)
+	GetConfig() *config.StorageConfig
+	GetAllRequests(modelFilter string) ([]*model.RequestLog, error)
+	GetRequestsSummary(modelFilter string) ([]*model.RequestSummary, error)
+	GetRequestsSummaryPaginated(modelFilter, startTime, endTime string, offset, limit int) ([]*model.RequestSummary, int, error)
+	GetLatestRequestDate() (*time.Time, error)
+
+	// Legacy analytics endpoints
+	GetProviderStats(startTime, endTime string) (*model.ProviderStatsResponse, error)
+	GetSubagentStats(startTime, endTime string) (*model.SubagentStatsResponse, error)
+	GetToolStats(startTime, endTime string) (*model.ToolStatsResponse, error)
+	GetPerformanceStats(startTime, endTime string) (*model.PerformanceStatsResponse, error)
 }

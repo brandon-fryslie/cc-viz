@@ -59,13 +59,16 @@ var bashFilePattern = regexp.MustCompile(`(?:>\s*|>>\s*|cat\s*>\s*|echo\s+[^>]*>
 
 // ExtractAndSaveFileChanges extracts file changes from conversation messages and saves them
 func (rl *RelationshipLinker) ExtractAndSaveFileChanges() (int, error) {
-	// Query messages with tool_use content and session_id
+	// [LAW:one-source-of-truth] message_uuid is the canonical processing key.
+	// Skip messages that already produced file-change rows to keep processing incremental.
 	query := `
-	SELECT uuid, session_id, conversation_id, content_json, timestamp
-	FROM conversation_messages
-	WHERE session_id IS NOT NULL AND session_id != ''
-	  AND content_json LIKE '%"tool_use"%'
-	ORDER BY timestamp
+	SELECT m.uuid, m.session_id, m.conversation_id, m.content_json, m.timestamp
+	FROM conversation_messages m
+	LEFT JOIN session_file_changes sfc ON sfc.message_uuid = m.uuid
+	WHERE m.session_id IS NOT NULL AND m.session_id != ''
+	  AND m.content_json LIKE '%"tool_use"%'
+	  AND sfc.message_uuid IS NULL
+	ORDER BY m.timestamp
 	`
 
 	rows, err := rl.storage.db.Query(query)
@@ -169,8 +172,16 @@ func (rl *RelationshipLinker) saveFileChange(change *model.SessionFileChange) er
 	query := `
 	INSERT INTO session_file_changes
 		(session_id, file_path, change_type, tool_name, message_uuid, timestamp)
-	VALUES (?, ?, ?, ?, ?, ?)
-	ON CONFLICT DO NOTHING
+	SELECT ?, ?, ?, ?, ?, ?
+	WHERE NOT EXISTS (
+		SELECT 1
+		FROM session_file_changes
+		WHERE session_id = ?
+		  AND message_uuid = ?
+		  AND file_path = ?
+		  AND change_type = ?
+		  AND tool_name = ?
+	)
 	`
 
 	_, err := rl.storage.db.Exec(
@@ -181,6 +192,11 @@ func (rl *RelationshipLinker) saveFileChange(change *model.SessionFileChange) er
 		change.ToolName,
 		change.MessageUUID,
 		change.Timestamp,
+		change.SessionID,
+		change.MessageUUID,
+		change.FilePath,
+		change.ChangeType,
+		change.ToolName,
 	)
 
 	if err != nil {
@@ -299,11 +315,13 @@ func (rl *RelationshipLinker) GetConversationSessions(conversationID string) ([]
 
 // GetSessionFileChanges returns file changes for a session
 func (rl *RelationshipLinker) GetSessionFileChanges(sessionID string) ([]*model.SessionFileChange, error) {
+	// [LAW:one-source-of-truth] Collapse historical duplicate rows into one logical file-change event.
 	query := `
-	SELECT id, session_id, file_path, change_type, tool_name,
-	       message_uuid, timestamp, created_at
+	SELECT MIN(id) as id, session_id, file_path, change_type, tool_name,
+	       message_uuid, MAX(timestamp) as timestamp, MIN(created_at) as created_at
 	FROM session_file_changes
 	WHERE session_id = ?
+	GROUP BY session_id, file_path, change_type, tool_name, message_uuid
 	ORDER BY timestamp DESC
 	`
 
@@ -399,9 +417,9 @@ func (rl *RelationshipLinker) GetFileChangeSessions(filePath string) ([]*model.S
 func (rl *RelationshipLinker) ExtractSessionUUIDsFromPlan(content string) []string {
 	// UUID pattern: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 	uuidPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-	
+
 	matches := uuidPattern.FindAllString(content, -1)
-	
+
 	// Deduplicate
 	seen := make(map[string]bool)
 	var unique []string
@@ -411,7 +429,7 @@ func (rl *RelationshipLinker) ExtractSessionUUIDsFromPlan(content string) []stri
 			unique = append(unique, m)
 		}
 	}
-	
+
 	return unique
 }
 

@@ -30,7 +30,7 @@ import (
 // It has full dependencies: read/write storage, conversation service, logger, config.
 // This handler contains all the dashboard and analytics functionality.
 type DataHandler struct {
-	storageService      service.StorageService
+	storageService      service.RuntimeStorageService
 	conversationService service.ConversationService
 	indexer             *service.ConversationIndexer
 	logger              *log.Logger
@@ -38,7 +38,7 @@ type DataHandler struct {
 }
 
 // NewDataHandler creates a new DataHandler with the required dependencies.
-func NewDataHandler(storageService service.StorageService, logger *log.Logger, cfg *config.Config) *DataHandler {
+func NewDataHandler(storageService service.RuntimeStorageService, logger *log.Logger, cfg *config.Config) *DataHandler {
 	conversationService := service.NewConversationService()
 
 	return &DataHandler{
@@ -1089,11 +1089,11 @@ func getProjectSessions(projectPath string) []map[string]interface{} {
 		sessionID := strings.TrimSuffix(name, ".jsonl")
 
 		sessions = append(sessions, map[string]interface{}{
-			"id":        sessionID,
-			"file":      name,
-			"size":      info.Size(),
-			"modified":  info.ModTime(),
-			"is_agent":  isAgent,
+			"id":       sessionID,
+			"file":     name,
+			"size":     info.Size(),
+			"modified": info.ModTime(),
+			"is_agent": isAgent,
 		})
 	}
 
@@ -1185,21 +1185,21 @@ func (h *DataHandler) GetTodosV2(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sessions = append(sessions, map[string]interface{}{
-			"session_uuid":       sessionUUID,
-			"agent_uuid":         agentUUID,
-			"file_path":          filePath,
-			"file_size":          fileSize,
-			"todo_count":         todoCount,
-			"pending_count":      pendingCount,
-			"in_progress_count":  inProgressCount,
-			"completed_count":    completedCount,
-			"modified_at":        modifiedAt,
+			"session_uuid":      sessionUUID,
+			"agent_uuid":        agentUUID,
+			"file_path":         filePath,
+			"file_size":         fileSize,
+			"todo_count":        todoCount,
+			"pending_count":     pendingCount,
+			"in_progress_count": inProgressCount,
+			"completed_count":   completedCount,
+			"modified_at":       modifiedAt,
 		})
 	}
 
 	response := map[string]interface{}{
-		"total_files":      totalFiles,
-		"non_empty_files":  nonEmptyFiles,
+		"total_files":     totalFiles,
+		"non_empty_files": nonEmptyFiles,
 		"status_breakdown": map[string]int{
 			"pending":     pending,
 			"in_progress": inProgress,
@@ -1228,15 +1228,17 @@ func (h *DataHandler) GetTodoDetailV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query todos for this session
+	// [LAW:dataflow-not-control-flow] Always query both agent_uuid and session_uuid paths;
+	// pick the most specific match (agent first) via data priority.
 	query := `
-		SELECT content, status, active_form
+		SELECT session_uuid, agent_uuid, content, status, active_form,
+		       CASE WHEN agent_uuid = ? THEN 0 ELSE 1 END AS priority
 		FROM claude_todos
-		WHERE session_uuid = ?
-		ORDER BY item_index ASC
+		WHERE agent_uuid = ? OR session_uuid = ?
+		ORDER BY priority ASC, item_index ASC
 	`
 
-	rows, err := storage.GetDB().Query(query, sessionUUID)
+	rows, err := storage.GetDB().Query(query, sessionUUID, sessionUUID, sessionUUID)
 	if err != nil {
 		log.Printf("Error querying todos for session %s: %v", sessionUUID, err)
 		writeErrorResponse(w, "Failed to query todos", http.StatusInternalServerError)
@@ -1244,11 +1246,25 @@ func (h *DataHandler) GetTodoDetailV2(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var todos []map[string]interface{}
+	todos := make([]map[string]interface{}, 0)
+	bestPriority := -1
+	resolvedSessionUUID := ""
+	resolvedAgentUUID := ""
 	for rows.Next() {
-		var content, status, activeForm string
-		err := rows.Scan(&content, &status, &activeForm)
+		var rowSessionUUID, rowAgentUUID, content, status, activeForm string
+		var priority int
+		err := rows.Scan(&rowSessionUUID, &rowAgentUUID, &content, &status, &activeForm, &priority)
 		if err != nil {
+			continue
+		}
+
+		if bestPriority == -1 || priority < bestPriority {
+			bestPriority = priority
+			resolvedSessionUUID = rowSessionUUID
+			resolvedAgentUUID = rowAgentUUID
+			todos = todos[:0]
+		}
+		if priority != bestPriority {
 			continue
 		}
 
@@ -1259,26 +1275,42 @@ func (h *DataHandler) GetTodoDetailV2(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if len(todos) == 0 {
+	// [LAW:one-source-of-truth] Resolve metadata from claude_todo_sessions and
+	// return that canonical identity even when a session has zero todo items.
+	var filePath, modifiedAt string
+	var metadataPriority int
+	metadataQuery := `
+		SELECT session_uuid, agent_uuid, file_path, modified_at,
+		       CASE WHEN agent_uuid = ? THEN 0 ELSE 1 END AS priority
+		FROM claude_todo_sessions
+		WHERE agent_uuid = ? OR session_uuid = ?
+		ORDER BY priority ASC, modified_at DESC
+		LIMIT 1
+	`
+	err = storage.GetDB().QueryRow(metadataQuery, sessionUUID, sessionUUID, sessionUUID).Scan(
+		&resolvedSessionUUID,
+		&resolvedAgentUUID,
+		&filePath,
+		&modifiedAt,
+		&metadataPriority,
+	)
+	if err == sql.ErrNoRows {
 		writeErrorResponse(w, "Session not found", http.StatusNotFound)
 		return
 	}
-
-	// Get session metadata
-	var agentUUID, filePath, modifiedAt string
-	sessionQuery := `
-		SELECT agent_uuid, file_path, modified_at
-		FROM claude_todo_sessions
-		WHERE session_uuid = ?
-	`
-	err = storage.GetDB().QueryRow(sessionQuery, sessionUUID).Scan(&agentUUID, &filePath, &modifiedAt)
 	if err != nil {
 		log.Printf("Error querying session metadata: %v", err)
+		writeErrorResponse(w, "Failed to query session metadata", http.StatusInternalServerError)
+		return
+	}
+
+	if bestPriority == -1 {
+		bestPriority = metadataPriority
 	}
 
 	response := map[string]interface{}{
-		"session_uuid": sessionUUID,
-		"agent_uuid":   agentUUID,
+		"session_uuid": resolvedSessionUUID,
+		"agent_uuid":   resolvedAgentUUID,
 		"file_path":    filePath,
 		"modified_at":  modifiedAt,
 		"todos":        todos,
@@ -1343,7 +1375,7 @@ func (h *DataHandler) GetPlansV2(w http.ResponseWriter, r *http.Request) {
 			"display_name": displayName,
 			"preview":      preview,
 			"file_size":    fileSize,
-			"modified_at":   modifiedAt,
+			"modified_at":  modifiedAt,
 		})
 	}
 
@@ -1835,7 +1867,6 @@ func (h *DataHandler) GetSubagentGraphStatsV2(w http.ResponseWriter, r *http.Req
 	writeJSONResponse(w, stats)
 }
 
-
 // GetSubagentGraphAgentV2 returns details for a specific agent
 func (h *DataHandler) GetSubagentGraphAgentV2(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -1973,7 +2004,6 @@ func (h *DataHandler) GetSessionDetailV2(w http.ResponseWriter, r *http.Request)
 		}
 		flatten(subagents.Hierarchy)
 	}
-
 
 	// Build extended response
 	response := map[string]interface{}{

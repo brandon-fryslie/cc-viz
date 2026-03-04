@@ -164,9 +164,10 @@ func (si *SessionDataIndexer) upsertTodos(filePath, sessionUUID, agentUUID strin
 	}
 
 	// Insert new todos
+	indexedAt := time.Now().Format(time.RFC3339)
 	stmt, err := tx.Prepare(`
-		INSERT INTO claude_todos (session_uuid, agent_uuid, file_path, content, status, active_form, item_index, modified_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO claude_todos (session_uuid, agent_uuid, file_path, content, status, active_form, item_index, modified_at, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -183,6 +184,7 @@ func (si *SessionDataIndexer) upsertTodos(filePath, sessionUUID, agentUUID strin
 			todo.ActiveForm,
 			i,
 			modTime.Format(time.RFC3339),
+			indexedAt,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert todo %d: %w", i, err)
@@ -214,8 +216,8 @@ func (si *SessionDataIndexer) upsertTodoSession(filePath, sessionUUID, agentUUID
 	_, err := si.storage.db.Exec(`
 		INSERT OR REPLACE INTO claude_todo_sessions (
 			session_uuid, agent_uuid, file_path, file_size, todo_count,
-			pending_count, in_progress_count, completed_count, modified_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			pending_count, in_progress_count, completed_count, modified_at, indexed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		sessionUUID,
 		agentUUID,
@@ -226,6 +228,7 @@ func (si *SessionDataIndexer) upsertTodoSession(filePath, sessionUUID, agentUUID
 		inProgressCount,
 		completedCount,
 		modTime.Format(time.RFC3339),
+		time.Now().Format(time.RFC3339),
 	)
 
 	if err != nil {
@@ -239,8 +242,8 @@ func (si *SessionDataIndexer) upsertTodoSession(filePath, sessionUUID, agentUUID
 func (si *SessionDataIndexer) upsertPlan(fileName, displayName, content, preview string, fileSize int64, modTime time.Time) error {
 	_, err := si.storage.db.Exec(`
 		INSERT OR REPLACE INTO claude_plans (
-			file_name, display_name, content, preview, file_size, modified_at
-		) VALUES (?, ?, ?, ?, ?, ?)
+			file_name, display_name, content, preview, file_size, modified_at, indexed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
 		fileName,
 		displayName,
@@ -248,6 +251,7 @@ func (si *SessionDataIndexer) upsertPlan(fileName, displayName, content, preview
 		preview,
 		fileSize,
 		modTime.Format(time.RFC3339),
+		time.Now().Format(time.RFC3339),
 	)
 
 	if err != nil {

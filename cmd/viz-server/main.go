@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -62,53 +62,6 @@ func main() {
 	}
 	defer subagentIndexer.Stop()
 	logger.Println("Subagent indexer started")
-
-	// Run session data indexer (initial index of todos/plans from ~/.claude)
-	sessionDataIndexer, err := service.NewSessionDataIndexer(sqliteStorage)
-	if err != nil {
-		logger.Printf("Warning: Failed to create session data indexer: %v", err)
-	} else {
-		filesProcessed, todosIndexed, indexErrors := sessionDataIndexer.IndexTodos()
-		if len(indexErrors) > 0 {
-			logger.Printf("Session data todos: %d files, %d todos, %d errors", filesProcessed, todosIndexed, len(indexErrors))
-		} else {
-			logger.Printf("Session data todos indexed: %d files, %d todos", filesProcessed, todosIndexed)
-		}
-
-		plansProcessed, planErrors := sessionDataIndexer.IndexPlans()
-		if len(planErrors) > 0 {
-			logger.Printf("Session data plans: %d files, %d errors", plansProcessed, len(planErrors))
-		} else {
-			logger.Printf("Session data plans indexed: %d files", plansProcessed)
-		}
-	}
-
-	// Run extension indexer (initial index of plugins/extensions from ~/.claude)
-	extensionIndexer := service.NewExtensionIndexer(sqliteStorage)
-	if err := extensionIndexer.IndexExtensions(); err != nil {
-		logger.Printf("Warning: Extension indexing failed: %v", err)
-	} else {
-		logger.Println("Extensions indexed")
-	}
-
-	// Run relationship linker to extract file changes from tool outputs
-	relationshipLinker := service.NewRelationshipLinker(sqliteStorage)
-	fileChangeCount, err := relationshipLinker.ExtractAndSaveFileChanges()
-	if err != nil {
-		logger.Printf("Warning: File change extraction failed: %v", err)
-	} else {
-		logger.Printf("File changes extracted: %d changes tracked", fileChangeCount)
-	}
-
-	// Link plans to sessions based on UUID extraction
-	homeDir, _ := os.UserHomeDir()
-	plansDir := filepath.Join(homeDir, ".claude", "plans")
-	planLinkCount, err := relationshipLinker.LinkPlansToSessions(plansDir)
-	if err != nil {
-		logger.Printf("Warning: Plan-session linking failed: %v", err)
-	} else {
-		logger.Printf("Plan-session links created: %d relationships", planLinkCount)
-	}
 
 	// Create data handler (full dependencies)
 	h := handler.NewDataHandler(storageService, logger, cfg)
@@ -250,11 +203,18 @@ func main() {
 		}
 	}()
 
+	// [LAW:dataflow-not-control-flow] Start artifact processing every boot with data-driven no-op behavior
+	// for already-indexed records, instead of gating server startup on heavy work.
+	startupCtx, cancelStartup := context.WithCancel(context.Background())
+	defer cancelStartup()
+	startBackgroundArtifactProcessing(startupCtx, logger, sqliteStorage)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	logger.Println("Shutting down viz-server...")
+	cancelStartup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -264,4 +224,67 @@ func main() {
 	}
 
 	logger.Println("viz-server exited")
+}
+
+func startBackgroundArtifactProcessing(ctx context.Context, logger *log.Logger, sqliteStorage *service.SQLiteStorageService) {
+	go func() {
+		logger.Println("Background artifact processing started")
+
+		sessionDataIndexer, err := service.NewSessionDataIndexer(sqliteStorage)
+		if err != nil {
+			logger.Printf("Warning: Failed to create session data indexer: %v", err)
+		} else {
+			filesProcessed, todosIndexed, indexErrors := sessionDataIndexer.IndexTodos()
+			if len(indexErrors) > 0 {
+				logger.Printf("Session data todos: %d files, %d todos, %d errors", filesProcessed, todosIndexed, len(indexErrors))
+			} else {
+				logger.Printf("Session data todos indexed: %d files, %d todos", filesProcessed, todosIndexed)
+			}
+
+			plansProcessed, planErrors := sessionDataIndexer.IndexPlans()
+			if len(planErrors) > 0 {
+				logger.Printf("Session data plans: %d files, %d errors", plansProcessed, len(planErrors))
+			} else {
+				logger.Printf("Session data plans indexed: %d files", plansProcessed)
+			}
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		extensionIndexer := service.NewExtensionIndexer(sqliteStorage)
+		if err := extensionIndexer.IndexExtensions(); err != nil {
+			logger.Printf("Warning: Extension indexing failed: %v", err)
+		} else {
+			logger.Println("Extensions indexed")
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		relationshipLinker := service.NewRelationshipLinker(sqliteStorage)
+		fileChangeCount, err := relationshipLinker.ExtractAndSaveFileChanges()
+		if err != nil {
+			logger.Printf("Warning: File change extraction failed: %v", err)
+		} else {
+			logger.Printf("File changes extracted: %d changes tracked", fileChangeCount)
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		homeDir, _ := os.UserHomeDir()
+		plansDir := filepath.Join(homeDir, ".claude", "plans")
+		planLinkCount, err := relationshipLinker.LinkPlansToSessions(plansDir)
+		if err != nil {
+			logger.Printf("Warning: Plan-session linking failed: %v", err)
+		} else {
+			logger.Printf("Plan-session links created: %d relationships", planLinkCount)
+		}
+
+		logger.Println("Background artifact processing complete")
+	}()
 }

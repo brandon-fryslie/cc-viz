@@ -69,30 +69,10 @@ func createFTS5Table(db *sql.DB) error {
 		log.Println("✅ Created requests_fts FTS5 table")
 	}
 
-	// Create extensions_fts virtual table
-	var extensionsFtsExists int
-	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='extensions_fts'").Scan(&extensionsFtsExists)
-	if err != nil {
-		return fmt.Errorf("failed to check if extensions_fts table exists: %w", err)
-	}
-
-	if extensionsFtsExists == 0 {
-		extensionsFtsSchema := `
-		CREATE VIRTUAL TABLE extensions_fts USING fts5(
-			extension_id UNINDEXED,
-			type,
-			name,
-			description,
-			metadata_text,
-			tokenize='porter unicode61'
-		);
-		`
-
-		if _, err := db.Exec(extensionsFtsSchema); err != nil {
-			return fmt.Errorf("failed to create extensions_fts table: %w", err)
-		}
-
-		log.Println("✅ Created extensions_fts FTS5 table")
+	// Create or repair extensions_fts virtual table.
+	// [LAW:one-source-of-truth] extensions_fts is derived data; when schema drifts we recreate it.
+	if err := ensureExtensionsFTSSchema(db); err != nil {
+		return err
 	}
 
 	// Create todos_fts virtual table
@@ -144,6 +124,113 @@ func createFTS5Table(db *sql.DB) error {
 		}
 
 		log.Println("✅ Created plans_fts FTS5 table")
+	}
+
+	return nil
+}
+
+func ensureExtensionsFTSSchema(db *sql.DB) error {
+	var extensionsFtsExists int
+	err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='extensions_fts'").Scan(&extensionsFtsExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if extensions_fts table exists: %w", err)
+	}
+
+	if extensionsFtsExists == 0 {
+		if err := createExtensionsFTSTable(db); err != nil {
+			return err
+		}
+		log.Println("✅ Created extensions_fts FTS5 table")
+		return nil
+	}
+
+	hasExtensionID, err := tableHasColumn(db, "extensions_fts", "extension_id")
+	if err != nil {
+		return err
+	}
+	if hasExtensionID {
+		if err := dropLegacyExtensionsFTSTriggers(db); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	log.Println("⚠️ Recreating extensions_fts with extension_id column")
+	if _, err := db.Exec("DROP TABLE IF EXISTS extensions_fts"); err != nil {
+		return fmt.Errorf("failed to drop incompatible extensions_fts table: %w", err)
+	}
+	if err := createExtensionsFTSTable(db); err != nil {
+		return err
+	}
+	log.Println("✅ Recreated extensions_fts FTS5 table")
+	if err := dropLegacyExtensionsFTSTriggers(db); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createExtensionsFTSTable(db *sql.DB) error {
+	extensionsFtsSchema := `
+	CREATE VIRTUAL TABLE extensions_fts USING fts5(
+		extension_id UNINDEXED,
+		type,
+		name,
+		description,
+		metadata_text,
+		tokenize='porter unicode61'
+	);
+	`
+
+	if _, err := db.Exec(extensionsFtsSchema); err != nil {
+		return fmt.Errorf("failed to create extensions_fts table: %w", err)
+	}
+
+	return nil
+}
+
+func tableHasColumn(db *sql.DB, tableName, columnName string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect %s schema: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, fmt.Errorf("failed to read %s schema row: %w", tableName, err)
+		}
+		if name == columnName {
+			return true, nil
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("failed to read %s schema: %w", tableName, err)
+	}
+
+	return false, nil
+}
+
+func dropLegacyExtensionsFTSTriggers(db *sql.DB) error {
+	// [LAW:single-enforcer] SaveExtension is the single writer for extensions_fts.
+	// Legacy triggers can drift from the FTS schema and block artifact indexing.
+	statements := []string{
+		"DROP TRIGGER IF EXISTS extensions_ai",
+		"DROP TRIGGER IF EXISTS extensions_ad",
+		"DROP TRIGGER IF EXISTS extensions_au",
+	}
+
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			return fmt.Errorf("failed to drop legacy extensions FTS trigger: %w", err)
+		}
 	}
 
 	return nil

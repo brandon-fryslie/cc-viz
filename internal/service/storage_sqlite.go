@@ -195,7 +195,6 @@ func (s *SQLiteStorageService) createTables() error {
 		return fmt.Errorf("sessions migrations failed: %w", err)
 	}
 
-
 	// ALWAYS run relationship maps migrations
 	if err := s.runRelationshipMapsMigrations(); err != nil {
 		return fmt.Errorf("relationship maps migrations failed: %w", err)
@@ -227,7 +226,6 @@ func (s *SQLiteStorageService) runMigrations() error {
 	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_provider ON requests(provider)")
 	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_subagent ON requests(subagent_name)")
 	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_timestamp_provider ON requests(timestamp DESC, provider)")
-
 
 	return nil
 }
@@ -433,6 +431,14 @@ func (s *SQLiteStorageService) runClaudeSessionDataMigrations() error {
 
 	}
 
+	// [LAW:one-source-of-truth] indexed_at powers UI/index freshness and must exist/populate in one place.
+	s.db.Exec("ALTER TABLE claude_todos ADD COLUMN indexed_at DATETIME")
+	s.db.Exec("ALTER TABLE claude_todo_sessions ADD COLUMN indexed_at DATETIME")
+	s.db.Exec("ALTER TABLE claude_plans ADD COLUMN indexed_at DATETIME")
+	s.db.Exec("UPDATE claude_todos SET indexed_at = CURRENT_TIMESTAMP WHERE indexed_at IS NULL OR indexed_at = ''")
+	s.db.Exec("UPDATE claude_todo_sessions SET indexed_at = CURRENT_TIMESTAMP WHERE indexed_at IS NULL OR indexed_at = ''")
+	s.db.Exec("UPDATE claude_plans SET indexed_at = CURRENT_TIMESTAMP WHERE indexed_at IS NULL OR indexed_at = ''")
+
 	return nil
 }
 
@@ -482,6 +488,9 @@ func (s *SQLiteStorageService) runExtensionMigrations() error {
 			"ALTER TABLE extensions ADD COLUMN marketplace_id TEXT",
 			"ALTER TABLE extensions ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
 			"ALTER TABLE extensions ADD COLUMN project_path TEXT",
+			"ALTER TABLE extensions ADD COLUMN metadata_json TEXT",
+			"ALTER TABLE extensions ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+			"ALTER TABLE extensions ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP",
 		}
 
 		for _, migration := range migrations {
@@ -550,7 +559,7 @@ func (s *SQLiteStorageService) runSubagentGraphMigrations() error {
 		} else if selfRefCount > 0 {
 			log.Printf("⚠️ Found %d self-referencing records in subagent_graph (bug from previous implementation)", selfRefCount)
 			log.Println("🔄 Clearing all subagent_graph records to force re-index with correct parent relationships...")
-			
+
 			result, err := s.db.Exec("DELETE FROM subagent_graph")
 			if err != nil {
 				log.Printf("❌ Failed to clear subagent_graph: %v", err)
@@ -621,6 +630,15 @@ func (s *SQLiteStorageService) runSessionsMigrations() error {
 		rowsAffected, _ := result.RowsAffected()
 		log.Printf("✅ Migrated %d sessions from conversation_messages", rowsAffected)
 	}
+
+	// [LAW:single-enforcer] Session creation timestamps are normalized here so
+	// session APIs can treat created_at as non-null and avoid per-callsite fallbacks.
+	s.db.Exec("ALTER TABLE sessions ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+	s.db.Exec(`
+		UPDATE sessions
+		SET created_at = COALESCE(created_at, started_at, CURRENT_TIMESTAMP)
+		WHERE created_at IS NULL OR created_at = ''
+	`)
 
 	return nil
 }
@@ -717,6 +735,12 @@ func (s *SQLiteStorageService) runRelationshipMapsMigrations() error {
 
 		log.Println("✅ Created session_file_changes table")
 	}
+	// [LAW:one-source-of-truth] message_uuid identifies whether a tool-use message
+	// has already been processed into session_file_changes.
+	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sfc_message_uuid ON session_file_changes(message_uuid)")
+	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sfc_session ON session_file_changes(session_id)")
+	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sfc_path ON session_file_changes(file_path)")
+	s.db.Exec("CREATE INDEX IF NOT EXISTS idx_sfc_timestamp ON session_file_changes(timestamp DESC)")
 
 	// Check if plan_session_map table exists
 	var psmExists int
@@ -751,10 +775,8 @@ func (s *SQLiteStorageService) runRelationshipMapsMigrations() error {
 		log.Println("✅ Created plan_session_map table")
 	}
 
-
 	return nil
 }
-
 
 // extractRequestTextForFTS extracts text from a request for full-text indexing
 func extractRequestTextForFTS(request *model.RequestLog) (toolNames, responseText, requestBodyText string) {
@@ -1255,9 +1277,9 @@ func (s *SQLiteStorageService) GetRequestsSummary(modelFilter string) ([]*model.
 		// Build usage from indexed columns
 		if inputTokens.Valid || outputTokens.Valid {
 			sum.Usage = &model.AnthropicUsage{
-				InputTokens:             int(inputTokens.Int64),
-				OutputTokens:            int(outputTokens.Int64),
-				CacheReadInputTokens:    int(cacheReadTokens.Int64),
+				InputTokens:              int(inputTokens.Int64),
+				OutputTokens:             int(outputTokens.Int64),
+				CacheReadInputTokens:     int(cacheReadTokens.Int64),
 				CacheCreationInputTokens: int(cacheCreationTokens.Int64),
 			}
 		}
@@ -1384,9 +1406,9 @@ func (s *SQLiteStorageService) GetRequestsSummaryPaginated(modelFilter, startTim
 		// Build usage from indexed columns
 		if inputTokens.Valid || outputTokens.Valid {
 			sum.Usage = &model.AnthropicUsage{
-				InputTokens:             int(inputTokens.Int64),
-				OutputTokens:            int(outputTokens.Int64),
-				CacheReadInputTokens:    int(cacheReadTokens.Int64),
+				InputTokens:              int(inputTokens.Int64),
+				OutputTokens:             int(outputTokens.Int64),
+				CacheReadInputTokens:     int(cacheReadTokens.Int64),
 				CacheCreationInputTokens: int(cacheCreationTokens.Int64),
 			}
 		}
@@ -1763,8 +1785,8 @@ func (s *SQLiteStorageService) GetToolStats(startTime, endTime string) (*model.T
 	}
 	defer rows.Close()
 
-	toolUsageCount := make(map[string]int)  // How many requests included this tool
-	toolCallCount := make(map[string]int)   // Total calls across all requests
+	toolUsageCount := make(map[string]int) // How many requests included this tool
+	toolCallCount := make(map[string]int)  // Total calls across all requests
 
 	for rows.Next() {
 		var toolsUsedJSON string
@@ -2041,7 +2063,6 @@ func (s *SQLiteStorageService) SearchConversations(opts model.SearchOptions) (*m
 		Offset:  opts.Offset,
 	}, nil
 }
-
 
 // SearchRequests performs full-text search on request data
 func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, limit, offset int, after, before string) (*model.RequestSearchResults, error) {
@@ -3121,6 +3142,7 @@ func (s *SQLiteStorageService) GetSubagentGraphAgent(sessionID, agentID string) 
 
 	return &node, nil
 }
+
 // GetPlugins returns all installed plugins with component counts from database
 func (s *SQLiteStorageService) GetPlugins() ([]model.Plugin, error) {
 	// Read installed_plugins.json
@@ -3139,7 +3161,7 @@ func (s *SQLiteStorageService) GetPlugins() ([]model.Plugin, error) {
 	}
 
 	var installedPlugins struct {
-		Version int                                   `json:"version"`
+		Version int                                 `json:"version"`
 		Plugins map[string][]map[string]interface{} `json:"plugins"`
 	}
 
@@ -3400,7 +3422,8 @@ func (s *SQLiteStorageService) UpsertSessionsForConversation(conversationID stri
 func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session, error) {
 	query := `
 		SELECT id, project_path, started_at, ended_at,
-		       conversation_count, message_count, agent_count, todo_count, created_at
+		       conversation_count, message_count, agent_count, todo_count,
+		       COALESCE(created_at, started_at, CURRENT_TIMESTAMP) AS created_at
 		FROM sessions
 		ORDER BY started_at DESC
 		LIMIT ? OFFSET ?
@@ -3415,7 +3438,7 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 	var sessions []*model.Session
 	for rows.Next() {
 		var session model.Session
-		var projectPath, startedAt, endedAt sql.NullString
+		var projectPath, startedAt, endedAt, createdAt sql.NullString
 
 		err := rows.Scan(
 			&session.ID,
@@ -3426,7 +3449,7 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 			&session.MessageCount,
 			&session.AgentCount,
 			&session.TodoCount,
-			&session.CreatedAt,
+			&createdAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan session row: %w", err)
@@ -3436,18 +3459,16 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 			session.ProjectPath = projectPath.String
 		}
 
-		if startedAt.Valid {
-			t, err := time.Parse(time.RFC3339, startedAt.String)
-			if err == nil {
-				session.StartedAt = &t
-			}
+		if t, ok := parseDBTime(startedAt); ok {
+			session.StartedAt = &t
 		}
 
-		if endedAt.Valid {
-			t, err := time.Parse(time.RFC3339, endedAt.String)
-			if err == nil {
-				session.EndedAt = &t
-			}
+		if t, ok := parseDBTime(endedAt); ok {
+			session.EndedAt = &t
+		}
+
+		if t, ok := parseDBTime(createdAt); ok {
+			session.CreatedAt = t
 		}
 
 		sessions = append(sessions, &session)
@@ -3460,13 +3481,14 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, error) {
 	query := `
 		SELECT id, project_path, started_at, ended_at,
-		       conversation_count, message_count, agent_count, todo_count, created_at
+		       conversation_count, message_count, agent_count, todo_count,
+		       COALESCE(created_at, started_at, CURRENT_TIMESTAMP) AS created_at
 		FROM sessions
 		WHERE id = ?
 	`
 
 	var session model.Session
-	var projectPath, startedAt, endedAt sql.NullString
+	var projectPath, startedAt, endedAt, createdAt sql.NullString
 
 	err := s.db.QueryRow(query, sessionID).Scan(
 		&session.ID,
@@ -3477,7 +3499,7 @@ func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, err
 		&session.MessageCount,
 		&session.AgentCount,
 		&session.TodoCount,
-		&session.CreatedAt,
+		&createdAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -3491,21 +3513,44 @@ func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, err
 		session.ProjectPath = projectPath.String
 	}
 
-	if startedAt.Valid {
-		t, err := time.Parse(time.RFC3339, startedAt.String)
-		if err == nil {
-			session.StartedAt = &t
-		}
+	if t, ok := parseDBTime(startedAt); ok {
+		session.StartedAt = &t
 	}
 
-	if endedAt.Valid {
-		t, err := time.Parse(time.RFC3339, endedAt.String)
-		if err == nil {
-			session.EndedAt = &t
-		}
+	if t, ok := parseDBTime(endedAt); ok {
+		session.EndedAt = &t
+	}
+
+	if t, ok := parseDBTime(createdAt); ok {
+		session.CreatedAt = t
 	}
 
 	return &session, nil
+}
+
+// [LAW:one-source-of-truth] Centralize database timestamp parsing so session
+// timestamps are interpreted consistently across all read paths.
+func parseDBTime(value sql.NullString) (time.Time, bool) {
+	if !value.Valid || value.String == "" {
+		return time.Time{}, false
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	}
+
+	for _, layout := range layouts {
+		parsed, err := time.Parse(layout, value.String)
+		if err == nil {
+			return parsed, true
+		}
+	}
+
+	return time.Time{}, false
 }
 
 // GetSessionStats returns aggregate statistics about all sessions
@@ -3545,6 +3590,7 @@ func (s *SQLiteStorageService) GetSessionStats() (*model.SessionStats, error) {
 
 	return &stats, nil
 }
+
 // GetSessionConversations returns conversations for a session
 func (s *SQLiteStorageService) GetSessionConversations(sessionID string) ([]*model.IndexedConversation, error) {
 	linker := NewRelationshipLinker(s)
