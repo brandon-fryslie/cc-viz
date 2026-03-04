@@ -6,6 +6,7 @@ import { Timeline, type TimelineEvent } from '@/components/ui/Timeline'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { legacyAwarePath } from '@/lib/legacy-path'
 
 interface SessionEventTimelineProps {
   sessionUuid?: string
@@ -337,7 +338,7 @@ function ConversationEventDetails({ message }: ConversationEventDetailsProps) {
 
       {/* View full link */}
       <a
-        href={`/conversations/${message.conversationId}`}
+        href={legacyAwarePath(`/conversations/${message.conversationId}`)}
         className="text-[var(--text-sm)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
       >
         View full conversation →
@@ -408,7 +409,7 @@ function PlanEventDetails({ plan }: PlanEventDetailsProps) {
 
       {/* View full link */}
       <a
-        href={`/plans-search?id=${plan.id}`}
+        href={legacyAwarePath(`/plans-search?id=${plan.id}`)}
         className="text-[var(--text-sm)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
       >
         View full plan →

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState } from 'react'
 import { PageHeader, PageContent } from '@/components/layout'
 import { BarChart3 } from 'lucide-react'

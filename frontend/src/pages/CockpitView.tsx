@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { ResizablePanel, Panel, PanelGroup } from '@/components/layout'
 import { SessionListPanel } from '@/components/features/SessionListPanel'

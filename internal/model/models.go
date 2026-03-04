@@ -25,42 +25,42 @@ type CriteriaScore struct {
 }
 
 type RequestLog struct {
-	RequestID       string              `json:"requestId"`
-	Timestamp       string              `json:"timestamp"`
-	Method          string              `json:"method"`
-	Endpoint        string              `json:"endpoint"`
-	Headers         map[string][]string `json:"headers"`
-	Body            interface{}         `json:"body"`
-	Model           string              `json:"model,omitempty"`
-	OriginalModel   string              `json:"originalModel,omitempty"`
-	RoutedModel     string              `json:"routedModel,omitempty"`
-	Provider        string              `json:"provider,omitempty"`      // Which provider handled this request
-	SubagentName    string              `json:"subagentName,omitempty"`  // Matched subagent definition name
-	ToolsUsed       []string            `json:"toolsUsed,omitempty"`     // List of tool names from request
-	ToolCallCount   int                 `json:"toolCallCount,omitempty"` // Number of tool calls in response
-	UserAgent       string              `json:"userAgent"`
-	ContentType     string              `json:"contentType"`
-	PromptGrade     *PromptGrade        `json:"promptGrade,omitempty"`
-	Response        *ResponseLog        `json:"response,omitempty"`
+	RequestID     string              `json:"requestId"`
+	Timestamp     string              `json:"timestamp"`
+	Method        string              `json:"method"`
+	Endpoint      string              `json:"endpoint"`
+	Headers       map[string][]string `json:"headers"`
+	Body          interface{}         `json:"body"`
+	Model         string              `json:"model,omitempty"`
+	OriginalModel string              `json:"originalModel,omitempty"`
+	RoutedModel   string              `json:"routedModel,omitempty"`
+	Provider      string              `json:"provider,omitempty"`      // Which provider handled this request
+	SubagentName  string              `json:"subagentName,omitempty"`  // Matched subagent definition name
+	ToolsUsed     []string            `json:"toolsUsed,omitempty"`     // List of tool names from request
+	ToolCallCount int                 `json:"toolCallCount,omitempty"` // Number of tool calls in response
+	UserAgent     string              `json:"userAgent"`
+	ContentType   string              `json:"contentType"`
+	PromptGrade   *PromptGrade        `json:"promptGrade,omitempty"`
+	Response      *ResponseLog        `json:"response,omitempty"`
 }
 
 // RequestSummary is a lightweight version of RequestLog for list views
 type RequestSummary struct {
-	RequestID        string          `json:"requestId"`
-	Timestamp        string          `json:"timestamp"`
-	Method           string          `json:"method"`
-	Endpoint         string          `json:"endpoint"`
-	Model            string          `json:"model,omitempty"`
-	OriginalModel    string          `json:"originalModel,omitempty"`
-	RoutedModel      string          `json:"routedModel,omitempty"`
-	Provider         string          `json:"provider,omitempty"`
-	SubagentName     string          `json:"subagentName,omitempty"`
-	ToolsUsed        []string        `json:"toolsUsed,omitempty"`
-	ToolCallCount    int             `json:"toolCallCount,omitempty"`
-	StatusCode       int             `json:"statusCode,omitempty"`
-	ResponseTime     int64           `json:"responseTime,omitempty"`
-	FirstByteTime    int64           `json:"firstByteTime,omitempty"` // Time to first token (streaming)
-	Usage            *AnthropicUsage `json:"usage,omitempty"`
+	RequestID     string          `json:"requestId"`
+	Timestamp     string          `json:"timestamp"`
+	Method        string          `json:"method"`
+	Endpoint      string          `json:"endpoint"`
+	Model         string          `json:"model,omitempty"`
+	OriginalModel string          `json:"originalModel,omitempty"`
+	RoutedModel   string          `json:"routedModel,omitempty"`
+	Provider      string          `json:"provider,omitempty"`
+	SubagentName  string          `json:"subagentName,omitempty"`
+	ToolsUsed     []string        `json:"toolsUsed,omitempty"`
+	ToolCallCount int             `json:"toolCallCount,omitempty"`
+	StatusCode    int             `json:"statusCode,omitempty"`
+	ResponseTime  int64           `json:"responseTime,omitempty"`
+	FirstByteTime int64           `json:"firstByteTime,omitempty"` // Time to first token (streaming)
+	Usage         *AnthropicUsage `json:"usage,omitempty"`
 }
 
 type ResponseLog struct {
@@ -301,8 +301,8 @@ type SubagentStatsResponse struct {
 // Tool analytics
 type ToolStats struct {
 	ToolName           string  `json:"toolName"`
-	UsageCount         int     `json:"usageCount"`   // How many requests included this tool
-	CallCount          int     `json:"callCount"`    // How many times tool was called in responses
+	UsageCount         int     `json:"usageCount"` // How many requests included this tool
+	CallCount          int     `json:"callCount"`  // How many times tool was called in responses
 	AvgCallsPerRequest float64 `json:"avgCallsPerRequest"`
 }
 
@@ -361,14 +361,14 @@ type ConversationMatch struct {
 
 // RequestSearchResult represents a request search result with context
 type RequestSearchResult struct {
-	RequestID  string `json:"requestId"`
-	Timestamp  string `json:"timestamp"`
-	Method     string `json:"method"`
-	Endpoint   string `json:"endpoint"`
-	Model      string `json:"model"`
-	Provider   string `json:"provider"`
-	MatchCount int    `json:"matchCount"`
-	Snippet    string `json:"snippet"`
+	RequestID      string `json:"requestId"`
+	Timestamp      string `json:"timestamp"`
+	Method         string `json:"method"`
+	Endpoint       string `json:"endpoint"`
+	Model          string `json:"model"`
+	Provider       string `json:"provider"`
+	MatchCount     int    `json:"matchCount"`
+	Snippet        string `json:"snippet"`
 	HighlightStart int    `json:"highlightStart,omitempty"`
 	HighlightEnd   int    `json:"highlightEnd,omitempty"`
 }
@@ -384,12 +384,12 @@ type RequestSearchResults struct {
 
 // UnifiedSearchResults represents search results across all data types
 type UnifiedSearchResults struct {
-	Query        string                    `json:"query"`
-	Requests     *RequestSearchResults     `json:"requests"`
-	Conversations *SearchResults           `json:"conversations"`
-	Extensions   UnifiedSearchSection      `json:"extensions"`
-	Todos        UnifiedSearchSection      `json:"todos"`
-	Plans        UnifiedSearchSection      `json:"plans"`
+	Query         string                `json:"query"`
+	Requests      *RequestSearchResults `json:"requests"`
+	Conversations *SearchResults        `json:"conversations"`
+	Extensions    UnifiedSearchSection  `json:"extensions"`
+	Todos         UnifiedSearchSection  `json:"todos"`
+	Plans         UnifiedSearchSection  `json:"plans"`
 }
 
 // UnifiedSearchSection represents results for a single data type in unified search
@@ -438,7 +438,6 @@ type PlanSearchResult struct {
 	ModifiedAt     string  `json:"modifiedAt,omitempty"`
 }
 
-
 // IndexedConversation represents a conversation from the database index
 type IndexedConversation struct {
 	ID           string    `json:"id"`
@@ -451,24 +450,24 @@ type IndexedConversation struct {
 
 // DBConversationMessage represents a message stored in the database
 type DBConversationMessage struct {
-	UUID                  string          `json:"uuid"`
-	ConversationID        string          `json:"conversationId"`
-	ParentUUID            *string         `json:"parentUuid,omitempty"`
-	Type                  string          `json:"type"`
-	Role                  string          `json:"role,omitempty"`
-	Timestamp             time.Time       `json:"timestamp"`
-	CWD                   string          `json:"cwd,omitempty"`
-	GitBranch             string          `json:"gitBranch,omitempty"`
-	SessionID             string          `json:"sessionId,omitempty"`
-	AgentID               string          `json:"agentId,omitempty"`
-	IsSidechain           bool            `json:"isSidechain"`
-	RequestID             string          `json:"requestId,omitempty"`
-	Model                 string          `json:"model,omitempty"`
-	InputTokens           int             `json:"inputTokens,omitempty"`
-	OutputTokens          int             `json:"outputTokens,omitempty"`
-	CacheReadTokens       int             `json:"cacheReadTokens,omitempty"`
-	CacheCreationTokens   int             `json:"cacheCreationTokens,omitempty"`
-	Content               json.RawMessage `json:"content,omitempty"`
+	UUID                string          `json:"uuid"`
+	ConversationID      string          `json:"conversationId"`
+	ParentUUID          *string         `json:"parentUuid,omitempty"`
+	Type                string          `json:"type"`
+	Role                string          `json:"role,omitempty"`
+	Timestamp           time.Time       `json:"timestamp"`
+	CWD                 string          `json:"cwd,omitempty"`
+	GitBranch           string          `json:"gitBranch,omitempty"`
+	SessionID           string          `json:"sessionId,omitempty"`
+	AgentID             string          `json:"agentId,omitempty"`
+	IsSidechain         bool            `json:"isSidechain"`
+	RequestID           string          `json:"requestId,omitempty"`
+	Model               string          `json:"model,omitempty"`
+	InputTokens         int             `json:"inputTokens,omitempty"`
+	OutputTokens        int             `json:"outputTokens,omitempty"`
+	CacheReadTokens     int             `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens int             `json:"cacheCreationTokens,omitempty"`
+	Content             json.RawMessage `json:"content,omitempty"`
 }
 
 // ConversationMessagesResponse wraps messages with pagination info
@@ -518,9 +517,9 @@ type ComponentCounts struct {
 }
 
 type Plugin struct {
-	ID              string          `json:"id"`                // "{plugin}@{marketplace}"
-	Name            string          `json:"name"`              // plugin name
-	Marketplace     string          `json:"marketplace"`       // marketplace ID
+	ID              string          `json:"id"`          // "{plugin}@{marketplace}"
+	Name            string          `json:"name"`        // plugin name
+	Marketplace     string          `json:"marketplace"` // marketplace ID
 	Version         string          `json:"version"`
 	InstallPath     string          `json:"install_path"`
 	ComponentCounts ComponentCounts `json:"component_counts"`
@@ -633,15 +632,15 @@ type SessionFileChange struct {
 
 // Plan types - for ~/.claude/plans/*.md
 type Plan struct {
-	ID          int        `json:"id"`
-	FileName    string     `json:"file_name"`
-	DisplayName string     `json:"display_name"`
-	Content     string     `json:"content"`
-	Preview     string     `json:"preview"`
-	FileSize    int64      `json:"file_size"`
-	ModifiedAt  time.Time  `json:"modified_at"`
-	IndexedAt   time.Time  `json:"indexed_at"`
-	SessionUUID *string    `json:"session_uuid,omitempty"` // NEW - nullable
+	ID          int       `json:"id"`
+	FileName    string    `json:"file_name"`
+	DisplayName string    `json:"display_name"`
+	Content     string    `json:"content"`
+	Preview     string    `json:"preview"`
+	FileSize    int64     `json:"file_size"`
+	ModifiedAt  time.Time `json:"modified_at"`
+	IndexedAt   time.Time `json:"indexed_at"`
+	SessionUUID *string   `json:"session_uuid,omitempty"` // NEW - nullable
 }
 
 // PlanSessionMap represents the junction table for plan-session relationships
@@ -670,14 +669,14 @@ type Todo struct {
 
 // Token Economics Types - for real token data from conversation_messages table
 type ConversationTokenSummary struct {
-	TotalTokens         int64                            `json:"totalTokens"`
-	InputTokens         int64                            `json:"inputTokens"`
-	OutputTokens        int64                            `json:"outputTokens"`
-	CacheReadTokens     int64                            `json:"cacheReadTokens"`
-	CacheCreationTokens int64                            `json:"cacheCreationTokens"`
-	MessageCount        int64                            `json:"messageCount"`
-	AvgTokensPerMessage int64                            `json:"avgTokensPerMessage"`
-	ByModel             map[string]*TokenBreakdown       `json:"byModel"`
+	TotalTokens         int64                      `json:"totalTokens"`
+	InputTokens         int64                      `json:"inputTokens"`
+	OutputTokens        int64                      `json:"outputTokens"`
+	CacheReadTokens     int64                      `json:"cacheReadTokens"`
+	CacheCreationTokens int64                      `json:"cacheCreationTokens"`
+	MessageCount        int64                      `json:"messageCount"`
+	AvgTokensPerMessage int64                      `json:"avgTokensPerMessage"`
+	ByModel             map[string]*TokenBreakdown `json:"byModel"`
 }
 
 type TokenBreakdown struct {
@@ -691,10 +690,10 @@ type TokenBreakdown struct {
 }
 
 type ProjectTokenStat struct {
-	Name              string                           `json:"name"`
-	TotalTokens       int64                            `json:"totalTokens"`
-	ConversationCount int64                            `json:"conversationCount"`
-	TopConversations  []ConversationTokenBreakdown     `json:"topConversations"`
+	Name              string                       `json:"name"`
+	TotalTokens       int64                        `json:"totalTokens"`
+	ConversationCount int64                        `json:"conversationCount"`
+	TopConversations  []ConversationTokenBreakdown `json:"topConversations"`
 }
 
 type ConversationTokenBreakdown struct {
@@ -714,4 +713,110 @@ type IndexedConversationWithTokens struct {
 	TotalTokens  int64     `json:"totalTokens"`
 	InputTokens  int64     `json:"inputTokens"`
 	OutputTokens int64     `json:"outputTokens"`
+}
+
+// V3OverviewResponse is the compact landing payload for the rebuilt Mantine UI.
+type V3OverviewResponse struct {
+	GeneratedAt string        `json:"generated_at"`
+	KPIs        V3OverviewKPI `json:"kpis"`
+}
+
+type V3OverviewKPI struct {
+	ActiveSessions      int   `json:"active_sessions"`
+	TotalSessions       int   `json:"total_sessions"`
+	TotalMessages       int   `json:"total_messages"`
+	ConversationsWindow int   `json:"conversations_window"`
+	TotalTokensWindow   int64 `json:"total_tokens_window"`
+	AvgTokensPerSession int64 `json:"avg_tokens_per_session"`
+}
+
+type V3MissionControlResponse struct {
+	GeneratedAt string          `json:"generated_at"`
+	KPIs        V3OverviewKPI   `json:"kpis"`
+	HotSessions []*Session      `json:"hot_sessions"`
+	Health      V3MissionHealth `json:"health"`
+}
+
+type V3MissionHealth struct {
+	DBConnected bool  `json:"db_connected"`
+	IndexerLag  int64 `json:"indexer_lag_seconds"`
+}
+
+type V3ActivityEvent struct {
+	ID             string `json:"id"`
+	Type           string `json:"type"`
+	Timestamp      string `json:"timestamp"`
+	Title          string `json:"title"`
+	Summary        string `json:"summary"`
+	SessionID      string `json:"session_id,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Route          string `json:"route"`
+}
+
+type V3ActivityResponse struct {
+	Events []*V3ActivityEvent `json:"events"`
+	Limit  int                `json:"limit"`
+}
+
+type V3SessionsResponse struct {
+	Sessions   []*Session `json:"sessions"`
+	Total      int        `json:"total"`
+	NextCursor string     `json:"next_cursor,omitempty"`
+}
+
+type V3TokenSummaryResponse struct {
+	GeneratedAt    string `json:"generated_at"`
+	TotalTokens    int64  `json:"total_tokens"`
+	BurnRatePerDay int64  `json:"burn_rate_per_day"`
+	PeakDayTokens  int64  `json:"peak_day_tokens"`
+	PeakDayDate    string `json:"peak_day_date,omitempty"`
+	TrendPercent   int64  `json:"trend_percent"`
+}
+
+type V3TokenTimeseriesPoint struct {
+	Bucket   string `json:"bucket"`
+	Tokens   int64  `json:"tokens"`
+	Requests int    `json:"requests"`
+}
+
+type V3TokenTimeseriesResponse struct {
+	Bucket string                    `json:"bucket"`
+	Points []*V3TokenTimeseriesPoint `json:"points"`
+}
+
+type V3ExtensionsConfigResponse struct {
+	Extensions   []*Extension           `json:"extensions"`
+	Plugins      []Plugin               `json:"plugins"`
+	Marketplaces []Marketplace          `json:"marketplaces"`
+	Config       map[string]interface{} `json:"config"`
+	Total        int                    `json:"total"`
+}
+
+type V3SearchResponse struct {
+	Query    string                   `json:"query"`
+	Sections map[string]V3SearchChunk `json:"sections"`
+}
+
+type V3SearchChunk struct {
+	Total   int           `json:"total"`
+	Results []interface{} `json:"results"`
+}
+
+type V3LiveClientMessage struct {
+	Op     string   `json:"op"`
+	Topics []string `json:"topics,omitempty"`
+	TS     string   `json:"ts,omitempty"`
+}
+
+type V3LiveServerMessage struct {
+	Op         string      `json:"op"`
+	ServerTime string      `json:"server_time,omitempty"`
+	Topics     []string    `json:"topics,omitempty"`
+	Topic      string      `json:"topic,omitempty"`
+	Event      string      `json:"event,omitempty"`
+	Seq        int64       `json:"seq,omitempty"`
+	TS         string      `json:"ts,omitempty"`
+	Data       interface{} `json:"data,omitempty"`
+	Code       string      `json:"code,omitempty"`
+	Message    string      `json:"message,omitempty"`
 }

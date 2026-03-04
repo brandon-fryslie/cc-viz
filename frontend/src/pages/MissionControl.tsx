@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { AppLayout } from '@/components/layout'

@@ -3,6 +3,7 @@ import { useMarketplaces } from '../lib/api'
 import { AppLayout } from '../components/layout'
 import type { Marketplace, Plugin } from '../lib/types'
 import { ChevronRight, ChevronDown, Package } from 'lucide-react'
+import { legacyAwarePath } from '@/lib/legacy-path'
 
 export function PluginViewPage() {
   const urlParams = new URLSearchParams(window.location.search)
@@ -232,7 +233,7 @@ function ComponentLink({ type, count, source, label }: ComponentLinkProps) {
 
   return (
     <a
-      href={`/extensions?type=${type}&source=${source}`}
+      href={legacyAwarePath(`/extensions?type=${type}&source=${source}`)}
       className="flex items-center justify-between text-sm p-2 rounded text-[var(--color-text-secondary)] hover:bg-[var(--color-accent)]/10 hover:text-[var(--color-accent)] border border-transparent hover:border-[var(--color-accent)]/30"
       onClick={(e: React.MouseEvent) => e.stopPropagation()}
     >

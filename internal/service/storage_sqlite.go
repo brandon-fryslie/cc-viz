@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -4200,37 +4201,28 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 		startTime = now.AddDate(0, 0, -30).Format(time.RFC3339)
 	}
 
-	// Query to get project-level stats
-	// Deduplicate by request_id before aggregating (see GetStats comment)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Query project-level stats from message timestamps so the timestamp index can be used.
 	query := `
 		SELECT
 			c.project_name,
-			COUNT(DISTINCT deduped.conversation_id) as conversation_count,
-			COALESCE(SUM(deduped.input_tokens + deduped.output_tokens + deduped.cache_read_tokens + deduped.cache_creation_tokens), 0) as total_tokens
-		FROM (
-			SELECT
-				COALESCE(cm.request_id, cm.uuid) as dedup_key,
-				cm.conversation_id,
-				MAX(cm.input_tokens) as input_tokens,
-				MAX(cm.output_tokens) as output_tokens,
-				MAX(cm.cache_read_tokens) as cache_read_tokens,
-				MAX(cm.cache_creation_tokens) as cache_creation_tokens
-			FROM conversation_messages cm
-			JOIN conversations c ON cm.conversation_id = c.id
-			WHERE c.start_time BETWEEN ? AND ?
-				AND cm.role IN ('user', 'assistant')
-			GROUP BY dedup_key
-		) deduped
-		JOIN conversations c ON deduped.conversation_id = c.id
+			COUNT(DISTINCT cm.conversation_id) as conversation_count,
+			COALESCE(SUM(cm.input_tokens + cm.output_tokens + cm.cache_read_tokens + cm.cache_creation_tokens), 0) as total_tokens
+		FROM conversation_messages cm
+		JOIN conversations c ON cm.conversation_id = c.id
+		WHERE cm.timestamp BETWEEN ? AND ?
+			AND cm.role IN ('user', 'assistant')
 		GROUP BY c.project_name
 		ORDER BY total_tokens DESC
+		LIMIT 25
 	`
 
-	rows, err := s.db.Query(query, startTime, endTime)
+	rows, err := s.db.QueryContext(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query project token stats: %w", err)
 	}
-	defer rows.Close()
 
 	var stats []*model.ProjectTokenStat
 	for rows.Next() {
@@ -4240,47 +4232,12 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 		}
 		stats = append(stats, &s)
 	}
-
-	// Get top 5 conversations for each project
-	for _, project := range stats {
-		topQuery := `
-			SELECT
-				conversation_id,
-				COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as total_tokens,
-				COUNT(*) as message_count
-			FROM (
-				SELECT
-					COALESCE(cm.request_id, cm.uuid) as dedup_key,
-					cm.conversation_id,
-					MAX(cm.input_tokens) as input_tokens,
-					MAX(cm.output_tokens) as output_tokens,
-					MAX(cm.cache_read_tokens) as cache_read_tokens,
-					MAX(cm.cache_creation_tokens) as cache_creation_tokens
-				FROM conversation_messages cm
-				JOIN conversations c ON cm.conversation_id = c.id
-				WHERE c.project_name = ?
-					AND cm.role IN ('user', 'assistant')
-				GROUP BY dedup_key
-			)
-			GROUP BY conversation_id
-			ORDER BY total_tokens DESC
-			LIMIT 5
-		`
-		topRows, err := s.db.Query(topQuery, project.Name)
-		if err != nil {
-			log.Printf("Warning: failed to query top conversations for project %s: %v", project.Name, err)
-			continue
-		}
-
-		for topRows.Next() {
-			var conv model.ConversationTokenBreakdown
-			if err := topRows.Scan(&conv.ConversationID, &conv.TotalTokens, &conv.MessageCount); err != nil {
-				log.Printf("Warning: failed to scan top conversation: %v", err)
-				continue
-			}
-			project.TopConversations = append(project.TopConversations, conv)
-		}
-		topRows.Close()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("failed iterating project token stats: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("failed closing project token stats rows: %w", err)
 	}
 
 	return stats, nil

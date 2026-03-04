@@ -16,7 +16,6 @@ import type {
   RoutingConfig,
   ProviderHealth,
   RoutingStatsResponse,
-  Conversation,
   ConversationDetail,
   ConversationMessagesResponse,
   ConversationSearchResults,

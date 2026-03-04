@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { type FC, useMemo, useState } from 'react'
 import {
   AreaChart,

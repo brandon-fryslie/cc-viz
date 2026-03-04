@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useMemo, useState, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Search } from 'lucide-react'

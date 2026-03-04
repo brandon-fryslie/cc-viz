@@ -16,7 +16,8 @@ build:
 build-embedded: install
     pnpm --filter ./frontend run build
     rm -rf cmd/viz-server/viz-frontend-embed
-    cp -r frontend/dist cmd/viz-server/viz-frontend-embed
+    mkdir -p cmd/viz-server/viz-frontend-embed
+    cp -r frontend/dist/. cmd/viz-server/viz-frontend-embed/
     CGO_ENABLED=1 go build -tags "fts5 embed_frontend" -o bin/viz-server ./cmd/viz-server
 
 # Run the viz-server

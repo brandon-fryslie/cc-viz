@@ -10,6 +10,7 @@ import {
   FileText,
   ExternalLink,
 } from 'lucide-react'
+import { legacyAwarePath } from '@/lib/legacy-path'
 
 interface ProjectSession {
   id: string
@@ -379,7 +380,7 @@ function ProjectDetailPane({ project }: { project: ProjectDetail }) {
       {/* Actions */}
       <div className="flex gap-3">
         <a
-          href={`/cc-viz/conversations?project=${encodeURIComponent(project.path)}`}
+          href={legacyAwarePath(`/cc-viz/conversations?project=${encodeURIComponent(project.path)}`)}
           className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] text-white rounded hover:opacity-90 transition-opacity text-sm"
         >
           <ExternalLink size={14} />

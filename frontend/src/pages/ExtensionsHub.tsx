@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useExtensions, usePlugins, reindexExtensions } from '../lib/api'
 import { AppLayout } from '../components/layout'
 import type { Extension } from '../lib/types'
+import { legacyAwarePath } from '@/lib/legacy-path'
 
 export function ExtensionsHubPage() {
   const [selectedExtension, setSelectedExtension] = useState<Extension | null>(null)
@@ -157,7 +158,7 @@ export function ExtensionsHubPage() {
                       <span>User</span>
                     ) : (
                       <a
-                        href={`/plugins?selected=${ext.source}`}
+                        href={legacyAwarePath(`/plugins?selected=${ext.source}`)}
                         className="text-[var(--color-accent)] hover:underline"
                         onClick={(e: React.MouseEvent) => e.stopPropagation()}
                       >

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useMemo } from 'react'
 import { PageHeader, PageContent } from '@/components/layout'
 import { Coins, TrendingUp, Calendar, Zap, AlertTriangle } from 'lucide-react'

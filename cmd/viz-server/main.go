@@ -149,6 +149,25 @@ func main() {
 	r.HandleFunc("/api/v2/claude/conversations/{id}/sessions", h.GetConversationSessionsV2).Methods("GET")
 	r.HandleFunc("/api/v2/claude/files", h.GetFileSessionsV2).Methods("GET")
 
+	// V3 API - realtime Mantine UI
+	r.HandleFunc("/api/v3/overview", h.GetOverviewV3).Methods("GET")
+	r.HandleFunc("/api/v3/mission-control", h.GetMissionControlV3).Methods("GET")
+	r.HandleFunc("/api/v3/mission-control/activity", h.GetMissionControlActivityV3).Methods("GET")
+	r.HandleFunc("/api/v3/sessions", h.GetSessionsV3).Methods("GET")
+	r.HandleFunc("/api/v3/sessions/{id}", h.GetSessionV3).Methods("GET")
+	r.HandleFunc("/api/v3/sessions/{id}/messages", h.GetSessionMessagesV3).Methods("GET")
+	r.HandleFunc("/api/v3/conversations/{id}", h.GetConversationV3).Methods("GET")
+	r.HandleFunc("/api/v3/plans/{id}", h.GetPlanV3).Methods("GET")
+	r.HandleFunc("/api/v3/token-economics/summary", h.GetTokenEconomicsSummaryV3).Methods("GET")
+	r.HandleFunc("/api/v3/token-economics/timeseries", h.GetTokenEconomicsTimeseriesV3).Methods("GET")
+	r.HandleFunc("/api/v3/token-economics/projects", h.GetTokenEconomicsProjectsV3).Methods("GET")
+	r.HandleFunc("/api/v3/extensions-config", h.GetExtensionsConfigV3).Methods("GET")
+	r.HandleFunc("/api/v3/extensions-config/{type}/{id}", h.GetExtensionConfigDetailV3).Methods("GET")
+	r.HandleFunc("/api/v3/extensions-config/plugins", h.GetExtensionsConfigPluginsV3).Methods("GET")
+	r.HandleFunc("/api/v3/extensions-config/reindex", h.ReindexExtensionsV2).Methods("POST")
+	r.HandleFunc("/api/v3/search", h.GetSearchV3).Methods("GET")
+	r.HandleFunc("/api/v3/live/ws", h.LiveWSV3).Methods("GET")
+
 	// Frontend static files (when embedded)
 	// SINGLE SOURCE OF TRUTH: embedFrontend variable set by build tags
 	if embedFrontend {
