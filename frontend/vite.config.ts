@@ -19,6 +19,7 @@ export default defineConfig({
         // In dev mode: proxy to viz-server (future name for proxy-data)
         target: process.env.VITE_API_URL || 'http://localhost:8002',
         changeOrigin: true,
+        ws: true,
       },
     },
   },

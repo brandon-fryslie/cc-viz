@@ -7,6 +7,10 @@ const LiveContext = createContext<LiveContextValue | null>(null)
 const DEFAULT_TOPICS = ['overview', 'mission_control', 'sessions', 'token_economics', 'extensions_config']
 
 function wsURL(): string {
+  const configuredURL = import.meta.env.VITE_LIVE_WS_URL?.trim()
+  if (configuredURL) {
+    return configuredURL
+  }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${window.location.host}/api/v3/live/ws`
 }
@@ -60,19 +64,39 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let reconnectTimer: number | undefined
+    let disposed = false
+
+    const scheduleReconnect = () => {
+      if (disposed) return
+      reconnectTimer = window.setTimeout(() => {
+        if (disposed) return
+        connect()
+      }, 1000)
+    }
 
     const connect = () => {
+      if (disposed) return
       const ws = new WebSocket(wsURL())
       socketRef.current = ws
 
       ws.onopen = () => {
+        if (disposed || socketRef.current !== ws) {
+          ws.close()
+          return
+        }
         setConnected(true)
         setLastHeartbeat(new Date().toISOString())
-        send({ op: 'subscribe', topics: Array.from(topicsRef.current) })
+        ws.send(JSON.stringify({ op: 'subscribe', topics: Array.from(topicsRef.current) }))
       }
 
       ws.onmessage = (event) => {
-        const message = JSON.parse(event.data) as LiveServerMessage
+        if (disposed || socketRef.current !== ws) return
+        let message: LiveServerMessage
+        try {
+          message = JSON.parse(event.data) as LiveServerMessage
+        } catch {
+          return
+        }
         if (message.op === 'heartbeat') {
           setLastHeartbeat(message.ts || new Date().toISOString())
           return
@@ -97,26 +121,47 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       }
 
       ws.onclose = () => {
+        if (socketRef.current === ws) {
+          socketRef.current = null
+        }
         setConnected(false)
-        reconnectTimer = window.setTimeout(connect, 1000)
+        scheduleReconnect()
       }
 
       ws.onerror = () => {
-        ws.close()
+        if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+          ws.close()
+        }
       }
     }
 
     connect()
 
     return () => {
-      if (reconnectTimer) {
+      disposed = true
+      if (reconnectTimer !== undefined) {
         window.clearTimeout(reconnectTimer)
       }
-      if (socketRef.current) {
-        socketRef.current.close()
+
+      const socket = socketRef.current
+      socketRef.current = null
+      setConnected(false)
+      if (!socket) return
+
+      socket.onopen = null
+      socket.onmessage = null
+      socket.onerror = null
+      socket.onclose = null
+      // [LAW:dataflow-not-control-flow] Always run the same teardown flow; socket state values decide how close is applied.
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close()
+        return
+      }
+      if (socket.readyState === WebSocket.CONNECTING) {
+        socket.addEventListener('open', () => socket.close(), { once: true })
       }
     }
-  }, [invalidateTopic, send])
+  }, [invalidateTopic])
 
   const subscribe = useCallback((topic: string) => {
     topicsRef.current.add(topic)
