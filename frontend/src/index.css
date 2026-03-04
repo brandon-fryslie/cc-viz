@@ -207,3 +207,40 @@ body {
   border-radius: var(--radius-sm);
   transition: background-color var(--duration-slow) var(--easing-ease-out);
 }
+
+/* ===================================================================
+ * LIVE FRESHNESS ANIMATIONS
+ * ================================================================ */
+
+@keyframes fresh-row-new {
+  0% {
+    background-color: rgba(46, 160, 67, 0.28);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes fresh-row-updated {
+  0% {
+    background-color: rgba(9, 105, 218, 0.24);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.fresh-flash-new {
+  animation: fresh-row-new 12s ease-out;
+}
+
+.fresh-flash-updated {
+  animation: fresh-row-updated 10s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fresh-flash-new,
+  .fresh-flash-updated {
+    animation: none;
+  }
+}

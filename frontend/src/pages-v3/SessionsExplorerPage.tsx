@@ -14,9 +14,11 @@ import {
   Title,
 } from '@mantine/core'
 import { useLocation, useNavigate } from '@tanstack/react-router'
+import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { parseFocusFromSearch } from '@/lib/deep-links'
 import { useV3Session, useV3SessionMessages, useV3Sessions } from '@/lib/api-v3'
 import { useLiveTopic } from '@/lib/live/LiveProvider'
+import { useListFreshness } from '@/lib/live/useListFreshness'
 
 interface SessionsExplorerPageProps {
   sessionId?: string
@@ -42,6 +44,53 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
 
   const { data: sessionDetail, isLoading: detailLoading } = useV3Session(selectedSessionId)
   const { data: sessionMessages, isLoading: messagesLoading } = useV3SessionMessages(selectedSessionId, { limit: 300 })
+  const sessionsFreshness = useListFreshness(sessionList?.sessions, {
+    scopeKey: `sessions-list-${query}`,
+    getId: (item) => item.id,
+    getHash: (item) => [item.message_count, item.todo_count, item.conversation_count, item.agent_count, item.project_path || ''].join('|'),
+  })
+  const messagesFreshness = useListFreshness(sessionMessages?.messages, {
+    scopeKey: `session-messages-${selectedSessionId || 'none'}`,
+    getId: (item) => item.uuid,
+    getHash: (item) => [item.timestamp, item.type, item.role || '', item.model || ''].join('|'),
+  })
+  const todosFreshness = useListFreshness(sessionDetail?.todos, {
+    scopeKey: `session-todos-${selectedSessionId || 'none'}`,
+    getId: (item) => String(item.id),
+    getHash: (item) => [item.status, item.modified_at, item.content].join('|'),
+  })
+  const plansFreshness = useListFreshness(sessionDetail?.plans, {
+    scopeKey: `session-plans-${selectedSessionId || 'none'}`,
+    getId: (item) => String(item.id),
+    getHash: (item) => [item.modified_at, item.preview].join('|'),
+  })
+  const filesFreshness = useListFreshness(sessionDetail?.files, {
+    scopeKey: `session-files-${selectedSessionId || 'none'}`,
+    getId: (item) => String(item.id),
+    getHash: (item) => [item.file_path, item.change_type, item.timestamp || ''].join('|'),
+  })
+  const conversationsFreshness = useListFreshness(sessionDetail?.conversations, {
+    scopeKey: `session-conversations-${selectedSessionId || 'none'}`,
+    getId: (item) => item.id,
+    getHash: (item) => [item.lastActivity, item.messageCount, item.projectName].join('|'),
+  })
+
+  const activeTabFreshness = useMemo(() => {
+    if (tab === 'messages') return messagesFreshness
+    if (tab === 'todos') return todosFreshness
+    if (tab === 'plans') return plansFreshness
+    if (tab === 'files') return filesFreshness
+    return conversationsFreshness
+  }, [conversationsFreshness, filesFreshness, messagesFreshness, plansFreshness, tab, todosFreshness])
+
+  const pageFreshness = {
+    // [LAW:one-source-of-truth] Page freshness is derived from list + active tab freshness metadata.
+    lastUpdatedAt: Math.max(sessionsFreshness.lastUpdatedAt ?? 0, activeTabFreshness.lastUpdatedAt ?? 0) || null,
+    newCount: sessionsFreshness.newCount + activeTabFreshness.newCount,
+    updatedCount: sessionsFreshness.updatedCount + activeTabFreshness.updatedCount,
+    removedCount: sessionsFreshness.removedCount + activeTabFreshness.removedCount,
+    getItemClassName: () => '',
+  }
 
   const searchString = typeof (location as { searchStr?: string }).searchStr === 'string'
     ? (location as { searchStr?: string }).searchStr!
@@ -83,7 +132,12 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
     navigate({ to: '/sessions/$sessionId', params: { sessionId: id } })
   }
 
-  const renderTable = (rows: Array<Record<string, unknown>>, columns: Array<{ key: string; label: string }>, kind: string) => {
+  const renderTable = (
+    rows: Array<Record<string, unknown>>,
+    columns: Array<{ key: string; label: string }>,
+    kind: string,
+    getItemClassName?: (id: string) => string,
+  ) => {
     if (rows.length === 0) {
       return <Text size="sm" c="dimmed">No data for this tab.</Text>
     }
@@ -102,7 +156,12 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
             {rows.map((row, index) => {
               const idValue = String(row.id || row.uuid || index)
               return (
-                <Table.Tr key={idValue} style={{ cursor: 'pointer' }} onClick={() => setSelection({ kind, value: idValue, payload: row })}>
+                <Table.Tr
+                  key={idValue}
+                  className={getItemClassName ? getItemClassName(idValue) : undefined}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setSelection({ kind, value: idValue, payload: row })}
+                >
                   {columns.map((column) => (
                     <Table.Td key={`${idValue}-${column.key}`}>
                       {String(row[column.key] ?? '')}
@@ -123,6 +182,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
         <div>
           <Title order={2}>Sessions Explorer</Title>
           <Text c="dimmed">Canonical session-centric view for messages, todos, plans, files, and related conversations.</Text>
+          <FreshnessBadges freshness={pageFreshness} label="Page freshness" />
         </div>
         {selectedSessionId && <Badge variant="light">Session {selectedSessionId.slice(0, 8)}</Badge>}
       </Group>
@@ -131,6 +191,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
         <Grid.Col span={{ base: 12, lg: 3 }}>
           <Card withBorder>
             <Stack>
+              <FreshnessBadges freshness={sessionsFreshness} label="Session list" />
               <TextInput
                 id="sessions-filter-query"
                 name="sessions-filter-query"
@@ -145,6 +206,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                   ) : (sessionList?.sessions || []).map((session) => (
                     <Card
                       key={session.id}
+                      className={sessionsFreshness.getItemClassName(session.id)}
                       withBorder
                       padding="sm"
                       style={{ cursor: 'pointer', borderColor: selectedSessionId === session.id ? 'var(--mantine-color-blue-5)' : undefined }}
@@ -172,6 +234,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
               <Text size="sm" c="dimmed">Select a session.</Text>
             ) : (
               <Tabs value={tab} onChange={(value) => setTab(value || 'messages')}>
+                <FreshnessBadges freshness={activeTabFreshness} label="Active tab" />
                 <Tabs.List>
                   <Tabs.Tab value="messages">Messages ({sessionMessages?.messages.length || 0})</Tabs.Tab>
                   <Tabs.Tab value="todos">Todos ({sessionDetail.todos.length})</Tabs.Tab>
@@ -192,6 +255,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                         { key: 'timestamp', label: 'Timestamp' },
                       ],
                       'message',
+                      messagesFreshness.getItemClassName,
                     )}
                 </Tabs.Panel>
 
@@ -205,6 +269,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                       { key: 'modified_at', label: 'Modified' },
                     ],
                     'todo',
+                    todosFreshness.getItemClassName,
                   )}
                 </Tabs.Panel>
 
@@ -218,6 +283,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                       { key: 'modified_at', label: 'Modified' },
                     ],
                     'plan',
+                    plansFreshness.getItemClassName,
                   )}
                 </Tabs.Panel>
 
@@ -231,6 +297,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                       { key: 'timestamp', label: 'Timestamp' },
                     ],
                     'file',
+                    filesFreshness.getItemClassName,
                   )}
                 </Tabs.Panel>
 
@@ -249,6 +316,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                       { key: 'lastActivity', label: 'Last Activity' },
                     ],
                     'conversation',
+                    conversationsFreshness.getItemClassName,
                   )}
                 </Tabs.Panel>
               </Tabs>

@@ -1,12 +1,25 @@
 import { Button, Card, Grid, Group, Stack, Text, Title } from '@mantine/core'
 import { useNavigate } from '@tanstack/react-router'
+import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3Overview } from '@/lib/api-v3'
+import { useListFreshness } from '@/lib/live/useListFreshness'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 export function OverviewPage() {
   const navigate = useNavigate()
   const { start, end, preset } = useV3DateRange()
   const { data, isLoading } = useV3Overview({ start, end })
+  const overviewFreshness = useListFreshness(data ? [data] : [], {
+    scopeKey: `overview-${start}-${end}`,
+    getId: () => 'overview',
+    getHash: (item) => [
+      item.kpis.active_sessions,
+      item.kpis.total_sessions,
+      item.kpis.total_messages,
+      item.kpis.total_tokens_window,
+      item.kpis.avg_tokens_per_session,
+    ].join('|'),
+  })
 
   const kpis = data?.kpis
 
@@ -16,6 +29,7 @@ export function OverviewPage() {
         <div>
           <Title order={2}>Overview</Title>
           <Text c="dimmed">Compact operational summary with direct actions ({preset}).</Text>
+          <FreshnessBadges freshness={overviewFreshness} label="Overview freshness" />
         </div>
         <Group>
           <Button variant="light" onClick={() => navigate({ to: '/mission-control' })}>Mission Control</Button>
@@ -32,7 +46,7 @@ export function OverviewPage() {
           { label: 'Avg Tokens/Session', value: kpis?.avg_tokens_per_session ?? 0 },
         ].map((item) => (
           <Grid.Col key={item.label} span={{ base: 12, sm: 6, lg: 4 }}>
-            <Card withBorder>
+            <Card withBorder className={overviewFreshness.getItemClassName('overview')}>
               <Text size="sm" c="dimmed">{item.label}</Text>
               <Title order={3}>{isLoading ? '--' : item.value.toLocaleString()}</Title>
             </Card>

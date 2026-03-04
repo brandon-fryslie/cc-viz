@@ -1,6 +1,8 @@
 import { Badge, Button, Card, Grid, Group, ScrollArea, Stack, Table, Text, Title } from '@mantine/core'
 import { useNavigate } from '@tanstack/react-router'
+import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3MissionActivity, useV3MissionControl } from '@/lib/api-v3'
+import { useListFreshness } from '@/lib/live/useListFreshness'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 export function MissionControlPage() {
@@ -8,6 +10,24 @@ export function MissionControlPage() {
   const { start, end, preset } = useV3DateRange()
   const { data, isLoading } = useV3MissionControl({ start, end })
   const { data: activityData, isLoading: activityLoading } = useV3MissionActivity(40)
+  const hotSessionFreshness = useListFreshness(data?.hot_sessions, {
+    scopeKey: 'mission-control-hot-sessions',
+    getId: (item) => item.id,
+    getHash: (item) => [item.message_count, item.todo_count, item.conversation_count, item.agent_count].join('|'),
+  })
+  const activityFreshness = useListFreshness(activityData?.events, {
+    scopeKey: 'mission-control-activity',
+    getId: (item) => item.id,
+    getHash: (item) => [item.type, item.timestamp, item.title, item.summary, item.route].join('|'),
+  })
+  const missionPageFreshness = {
+    // [LAW:one-source-of-truth] A page-level signal is derived from section freshness signals instead of tracking another source.
+    lastUpdatedAt: Math.max(hotSessionFreshness.lastUpdatedAt ?? 0, activityFreshness.lastUpdatedAt ?? 0) || null,
+    newCount: hotSessionFreshness.newCount + activityFreshness.newCount,
+    updatedCount: hotSessionFreshness.updatedCount + activityFreshness.updatedCount,
+    removedCount: hotSessionFreshness.removedCount + activityFreshness.removedCount,
+    getItemClassName: () => '',
+  }
 
   return (
     <Stack>
@@ -15,6 +35,7 @@ export function MissionControlPage() {
         <div>
           <Title order={2}>Mission Control</Title>
           <Text c="dimmed">Live command center for sessions, activity, and health ({preset}).</Text>
+          <FreshnessBadges freshness={missionPageFreshness} label="Page freshness" />
         </div>
         <Group>
           <Button variant="default" onClick={() => navigate({ to: '/search' })}>Search</Button>
@@ -52,7 +73,10 @@ export function MissionControlPage() {
         <Grid.Col span={{ base: 12, lg: 7 }}>
           <Card withBorder>
             <Stack gap="sm">
-              <Text fw={600}>Hot Sessions</Text>
+              <Group justify="space-between">
+                <Text fw={600}>Hot Sessions</Text>
+                <FreshnessBadges freshness={hotSessionFreshness} label="Table" />
+              </Group>
               <ScrollArea h={360}>
                 <Table striped highlightOnHover withTableBorder>
                   <Table.Thead>
@@ -65,7 +89,12 @@ export function MissionControlPage() {
                   </Table.Thead>
                   <Table.Tbody>
                     {(data?.hot_sessions || []).map((session) => (
-                      <Table.Tr key={session.id} onClick={() => navigate({ to: '/sessions/$sessionId', params: { sessionId: session.id } })} style={{ cursor: 'pointer' }}>
+                      <Table.Tr
+                        key={session.id}
+                        className={hotSessionFreshness.getItemClassName(session.id)}
+                        onClick={() => navigate({ to: '/sessions/$sessionId', params: { sessionId: session.id } })}
+                        style={{ cursor: 'pointer' }}
+                      >
                         <Table.Td>{session.id.slice(0, 8)}</Table.Td>
                         <Table.Td>{session.project_path || 'N/A'}</Table.Td>
                         <Table.Td>{session.message_count}</Table.Td>
@@ -82,7 +111,10 @@ export function MissionControlPage() {
         <Grid.Col span={{ base: 12, lg: 5 }}>
           <Card withBorder>
             <Stack gap="sm">
-              <Text fw={600}>Activity Feed</Text>
+              <Group justify="space-between">
+                <Text fw={600}>Activity Feed</Text>
+                <FreshnessBadges freshness={activityFreshness} label="Feed" />
+              </Group>
               <ScrollArea h={360}>
                 <Stack gap="xs">
                   {activityLoading ? (
@@ -91,7 +123,7 @@ export function MissionControlPage() {
                     <Text size="sm" c="dimmed">No activity events.</Text>
                   ) : (
                     (activityData?.events || []).map((event) => (
-                      <Card key={event.id} withBorder padding="sm">
+                      <Card key={event.id} withBorder padding="sm" className={activityFreshness.getItemClassName(event.id)}>
                         <Group justify="space-between">
                           <Badge variant="outline">{event.type}</Badge>
                           <Text size="xs" c="dimmed">{new Date(event.timestamp).toLocaleString()}</Text>

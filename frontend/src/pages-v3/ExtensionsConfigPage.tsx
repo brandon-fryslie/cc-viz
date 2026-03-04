@@ -17,7 +17,9 @@ import {
   Title,
 } from '@mantine/core'
 import { useLocation, useNavigate } from '@tanstack/react-router'
+import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { reindexExtensionsV3, useV3ExtensionDetail, useV3ExtensionsConfig } from '@/lib/api-v3'
+import { useListFreshness } from '@/lib/live/useListFreshness'
 
 interface ExtensionsConfigPageProps {
   type?: string
@@ -67,6 +69,31 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
   })
 
   const { data: detail } = useV3ExtensionDetail(selected?.type || null, selected?.id || null)
+  const extensionFreshness = useListFreshness(data?.extensions, {
+    scopeKey: `extensions-config-${typeFilter}-${sourceFilter}-${enabledFilter}-${pluginFilter}-${search}`,
+    getId: (item) => item.id,
+    getHash: (item) => [item.enabled, item.updated_at || '', item.source, item.type, item.plugin_id || ''].join('|'),
+  })
+  const pluginFreshness = useListFreshness(data?.plugins, {
+    scopeKey: 'extensions-config-plugins',
+    getId: (item) => item.id,
+    getHash: (item) => [
+      item.version,
+      item.component_counts.agents,
+      item.component_counts.commands,
+      item.component_counts.skills,
+      item.component_counts.hooks,
+      item.component_counts.mcp,
+    ].join('|'),
+  })
+  const pageFreshness = {
+    // [LAW:one-source-of-truth] Page freshness aggregates extension/plugin freshness without duplicating mutation tracking.
+    lastUpdatedAt: Math.max(extensionFreshness.lastUpdatedAt ?? 0, pluginFreshness.lastUpdatedAt ?? 0) || null,
+    newCount: extensionFreshness.newCount + pluginFreshness.newCount,
+    updatedCount: extensionFreshness.updatedCount + pluginFreshness.updatedCount,
+    removedCount: extensionFreshness.removedCount + pluginFreshness.removedCount,
+    getItemClassName: () => '',
+  }
 
   const sourceOptions = useMemo(() => {
     const unique = Array.from(new Set((data?.extensions || []).map((ext) => ext.source))).sort()
@@ -93,6 +120,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
         <div>
           <Title order={2}>Extensions & Config</Title>
           <Text c="dimmed">Unified view for extensions, plugins, and Claude configuration.</Text>
+          <FreshnessBadges freshness={pageFreshness} label="Page freshness" />
         </div>
         <Button loading={reindexing} onClick={onReindex}>Reindex</Button>
       </Group>
@@ -154,6 +182,10 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
               <Text c="dimmed">Loading extensions...</Text>
             ) : (
               <ScrollArea h={560}>
+                <Group justify="space-between" mb="sm">
+                  <Text fw={600}>Extensions</Text>
+                  <FreshnessBadges freshness={extensionFreshness} label="Table" />
+                </Group>
                 <Table withTableBorder striped highlightOnHover>
                   <Table.Thead>
                     <Table.Tr>
@@ -167,6 +199,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
                     {(data?.extensions || []).map((extension) => (
                       <Table.Tr
                         key={extension.id}
+                        className={extensionFreshness.getItemClassName(extension.id)}
                         style={{ cursor: 'pointer' }}
                         onClick={() => {
                           setSelected({ type: extension.type, id: extension.id })
@@ -197,7 +230,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
             <Tabs.Tab value="claude_md">CLAUDE.md</Tabs.Tab>
             <Tabs.Tab value="settings">settings.json</Tabs.Tab>
             <Tabs.Tab value="mcp">MCP</Tabs.Tab>
-            <Tabs.Tab value="plugins">Plugins</Tabs.Tab>
+            <Tabs.Tab value="plugins">Plugins {pluginFreshness.newCount > 0 ? `(+${pluginFreshness.newCount})` : ''}</Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="claude_md" pt="sm">
@@ -213,6 +246,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
             <Code block>{JSON.stringify((data?.config as Record<string, unknown>)?.mcp || {}, null, 2)}</Code>
           </Tabs.Panel>
           <Tabs.Panel value="plugins" pt="sm">
+            <FreshnessBadges freshness={pluginFreshness} label="Plugin inventory" />
             <Code block>{JSON.stringify(data?.plugins || [], null, 2)}</Code>
           </Tabs.Panel>
         </Tabs>
