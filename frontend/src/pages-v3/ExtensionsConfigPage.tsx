@@ -102,8 +102,15 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
           <Card withBorder>
             <Stack>
               <Text fw={600}>Filters</Text>
-              <TextInput placeholder="Search" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
+              <TextInput
+                id="extensions-config-query"
+                name="extensions-config-query"
+                placeholder="Search"
+                value={search}
+                onChange={(event) => setSearch(event.currentTarget.value)}
+              />
               <Select
+                name="extensions-config-type"
                 label="Type"
                 value={typeFilter}
                 onChange={(value) => setTypeFilter(value || '')}
@@ -116,14 +123,27 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
                   { value: 'mcp', label: 'MCP' },
                 ]}
               />
-              <Select label="Source" value={sourceFilter} onChange={(value) => setSourceFilter(value || '')} data={[{ value: '', label: 'All' }, ...sourceOptions]} />
               <Select
+                name="extensions-config-source"
+                label="Source"
+                value={sourceFilter}
+                onChange={(value) => setSourceFilter(value || '')}
+                data={[{ value: '', label: 'All' }, ...sourceOptions]}
+              />
+              <Select
+                name="extensions-config-enabled"
                 label="Enabled"
                 value={enabledFilter}
                 onChange={(value) => setEnabledFilter(value || '')}
                 data={[{ value: '', label: 'All' }, { value: 'true', label: 'Enabled' }, { value: 'false', label: 'Disabled' }]}
               />
-              <Select label="Plugin" value={pluginFilter} onChange={(value) => setPluginFilter(value || '')} data={[{ value: '', label: 'All' }, ...pluginOptions]} />
+              <Select
+                name="extensions-config-plugin"
+                label="Plugin"
+                value={pluginFilter}
+                onChange={(value) => setPluginFilter(value || '')}
+                data={[{ value: '', label: 'All' }, ...pluginOptions]}
+              />
             </Stack>
           </Card>
         </Grid.Col>

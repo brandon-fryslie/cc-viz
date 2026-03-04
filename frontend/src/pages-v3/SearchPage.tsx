@@ -23,6 +23,8 @@ export function SearchPage() {
       </div>
 
       <TextInput
+        id="search-page-query"
+        name="search-page-query"
         placeholder="Search sessions, conversations, messages, todos, plans, files, extensions, plugins, config"
         value={query}
         onChange={(event) => setQuery(event.currentTarget.value)}

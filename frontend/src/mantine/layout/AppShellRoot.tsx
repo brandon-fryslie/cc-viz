@@ -154,6 +154,8 @@ export function AppShellRoot() {
       <Modal opened={paletteOpen} onClose={closePalette} title="Search Everything" centered size="lg">
         <Stack>
           <TextInput
+            id="global-command-palette-query"
+            name="global-command-palette-query"
             autoFocus
             leftSection={<IconSearch size={14} />}
             placeholder="Search sessions, conversations, todos, plans, files, extensions, plugins, config..."

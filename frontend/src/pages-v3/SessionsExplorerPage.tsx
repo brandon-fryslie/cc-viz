@@ -132,6 +132,8 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
           <Card withBorder>
             <Stack>
               <TextInput
+                id="sessions-filter-query"
+                name="sessions-filter-query"
                 placeholder="Filter sessions by ID/path"
                 value={query}
                 onChange={(event) => setQuery(event.currentTarget.value)}

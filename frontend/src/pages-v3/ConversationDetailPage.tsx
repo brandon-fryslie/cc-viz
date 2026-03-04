@@ -1,5 +1,30 @@
-import { Card, Code, Group, ScrollArea, Stack, Text, Title } from '@mantine/core'
+import { Badge, Card, Code, Group, ScrollArea, Stack, Text, Title } from '@mantine/core'
 import { useV3Conversation } from '@/lib/api-v3'
+
+function formatTimestamp(timestamp: string | undefined): string {
+  if (!timestamp) {
+    return 'Timestamp unavailable'
+  }
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Timestamp unavailable'
+  }
+  return parsed.toLocaleString()
+}
+
+function summarizeMessage(message: {
+  type: string
+  message?: {
+    role?: string
+    content?: unknown
+  }
+}) {
+  const role = message.message?.role || 'event'
+  if (typeof message.message?.content === 'string') {
+    return { role, preview: message.message.content }
+  }
+  return { role, preview: '' }
+}
 
 export function ConversationDetailPage({ conversationId }: { conversationId: string }) {
   const { data, isLoading, error } = useV3Conversation(conversationId)
@@ -24,15 +49,24 @@ export function ConversationDetailPage({ conversationId }: { conversationId: str
       <Card withBorder>
         <ScrollArea h={620}>
           <Stack>
-            {data.conversation.messages.map((message) => (
-              <Card key={message.uuid} withBorder>
-                <Group justify="space-between" mb="xs">
-                  <Text fw={600}>{message.type}</Text>
-                  <Text size="xs" c="dimmed">{new Date(message.timestamp).toLocaleString()}</Text>
-                </Group>
-                <Code block>{JSON.stringify(message, null, 2)}</Code>
-              </Card>
-            ))}
+            {data.conversation.messages.map((message) => {
+              const summary = summarizeMessage(message)
+              return (
+                <Card key={message.uuid} withBorder>
+                  <Group justify="space-between" mb="xs">
+                    <Group gap="xs">
+                      <Badge variant="outline">{message.type}</Badge>
+                      <Badge variant="light">{summary.role}</Badge>
+                    </Group>
+                    <Text size="xs" c="dimmed">{formatTimestamp(message.timestamp)}</Text>
+                  </Group>
+                  {summary.preview && (
+                    <Text size="sm" mb="xs" lineClamp={3}>{summary.preview}</Text>
+                  )}
+                  <Code block>{JSON.stringify(message, null, 2)}</Code>
+                </Card>
+              )
+            })}
           </Stack>
         </ScrollArea>
       </Card>
