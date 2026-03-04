@@ -22,8 +22,9 @@ type SQLiteStorageService struct {
 }
 
 func NewSQLiteStorageService(cfg *config.StorageConfig) (StorageService, error) {
-	// Add SQLite-specific connection parameters for better concurrency
-	dbPath := cfg.DBPath + "?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL"
+	// [LAW:single-enforcer] Configure write-lock waiting at the DB boundary so
+	// all storage call paths share one concurrency policy.
+	dbPath := cfg.DBPath + "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL"
 
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {

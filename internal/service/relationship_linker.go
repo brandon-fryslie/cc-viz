@@ -315,14 +315,21 @@ func (rl *RelationshipLinker) GetConversationSessions(conversationID string) ([]
 
 // GetSessionFileChanges returns file changes for a session
 func (rl *RelationshipLinker) GetSessionFileChanges(sessionID string) ([]*model.SessionFileChange, error) {
-	// [LAW:one-source-of-truth] Collapse historical duplicate rows into one logical file-change event.
+	// [LAW:one-source-of-truth] Normalize legacy NULLs in SQL so file-change
+	// rows deserialize through one canonical shape.
 	query := `
-	SELECT MIN(id) as id, session_id, file_path, change_type, tool_name,
-	       message_uuid, MAX(timestamp) as timestamp, MIN(created_at) as created_at
+	SELECT MIN(id) as id,
+	       session_id,
+	       file_path,
+	       change_type,
+	       COALESCE(tool_name, '') as tool_name,
+	       COALESCE(message_uuid, '') as message_uuid,
+	       MAX(timestamp) as timestamp,
+	       COALESCE(MIN(created_at), MAX(timestamp), CURRENT_TIMESTAMP) as created_at
 	FROM session_file_changes
 	WHERE session_id = ?
-	GROUP BY session_id, file_path, change_type, tool_name, message_uuid
-	ORDER BY timestamp DESC
+	GROUP BY session_id, file_path, change_type, COALESCE(tool_name, ''), COALESCE(message_uuid, '')
+	ORDER BY MAX(timestamp) DESC
 	`
 
 	rows, err := rl.storage.db.Query(query, sessionID)
@@ -334,7 +341,8 @@ func (rl *RelationshipLinker) GetSessionFileChanges(sessionID string) ([]*model.
 	var changes []*model.SessionFileChange
 	for rows.Next() {
 		var change model.SessionFileChange
-		var timestamp sql.NullTime
+		var timestamp sql.NullString
+		var createdAt sql.NullString
 
 		if err := rows.Scan(
 			&change.ID,
@@ -344,13 +352,19 @@ func (rl *RelationshipLinker) GetSessionFileChanges(sessionID string) ([]*model.
 			&change.ToolName,
 			&change.MessageUUID,
 			&timestamp,
-			&change.CreatedAt,
+			&createdAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan file change: %w", err)
 		}
 
-		if timestamp.Valid {
-			change.Timestamp = &timestamp.Time
+		if parsed, ok := parseDBTime(timestamp); ok {
+			change.Timestamp = &parsed
+		}
+
+		if parsed, ok := parseDBTime(createdAt); ok {
+			change.CreatedAt = parsed
+		} else if change.Timestamp != nil {
+			change.CreatedAt = *change.Timestamp
 		}
 
 		changes = append(changes, &change)
