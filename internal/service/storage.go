@@ -9,7 +9,6 @@ import (
 
 type StorageService interface {
 	RuntimeStorageService
-	LegacyRequestStorageService
 }
 
 // RuntimeStorageService is the storage contract required by the current runtime router.
@@ -25,7 +24,6 @@ type RuntimeStorageService interface {
 
 	// Conversation search
 	SearchConversations(opts model.SearchOptions) (*model.SearchResults, error)
-	SearchRequests(query string, modelFilter string, limit, offset int, after, before string) (*model.RequestSearchResults, error)
 	SearchExtensions(query string, extType, source string, limit, offset int, after, before string) ([]*model.ExtensionSearchResult, int, error)
 	SearchTodos(query, status string, limit, offset int, after, before string) ([]*model.TodoSearchResult, int, error)
 	SearchPlans(query, status string, limit, offset int, after, before string) ([]*model.PlanSearchResult, int, error)
@@ -112,6 +110,7 @@ type LegacyRequestStorageService interface {
 	GetRequestsSummary(modelFilter string) ([]*model.RequestSummary, error)
 	GetRequestsSummaryPaginated(modelFilter, startTime, endTime string, offset, limit int) ([]*model.RequestSummary, int, error)
 	GetLatestRequestDate() (*time.Time, error)
+	SearchRequests(query string, modelFilter string, limit, offset int, after, before string) (*model.RequestSearchResults, error)
 
 	// Legacy analytics endpoints
 	GetProviderStats(startTime, endTime string) (*model.ProviderStatsResponse, error)

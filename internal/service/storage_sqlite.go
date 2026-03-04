@@ -14,14 +14,16 @@ import (
 
 	"github.com/brandon-fryslie/cc-viz/internal/config"
 	"github.com/brandon-fryslie/cc-viz/internal/model"
+	hybridstore "github.com/brandon-fryslie/cc-viz/internal/storagehybrid/hybrid"
 )
 
 type SQLiteStorageService struct {
 	db     *sql.DB
 	config *config.StorageConfig
+	hybrid *hybridstore.Store
 }
 
-func NewSQLiteStorageService(cfg *config.StorageConfig) (StorageService, error) {
+func NewSQLiteStorageService(cfg *config.StorageConfig) (*SQLiteStorageService, error) {
 	// [LAW:single-enforcer] Configure write-lock waiting at the DB boundary so
 	// all storage call paths share one concurrency policy.
 	dbPath := cfg.DBPath + "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=NORMAL"
@@ -39,6 +41,17 @@ func NewSQLiteStorageService(cfg *config.StorageConfig) (StorageService, error) 
 	if err := service.createTables(); err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)
 	}
+
+	// [LAW:one-source-of-truth] Canonical schema ownership (GORM) and search ownership (SQL)
+	// are composed once through the hybrid store.
+	hybrid, err := hybridstore.New(db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize hybrid storage: %w", err)
+	}
+	if err := hybrid.Bootstrap(); err != nil {
+		return nil, fmt.Errorf("failed to bootstrap hybrid storage: %w", err)
+	}
+	service.hybrid = hybrid
 
 	return service, nil
 }
@@ -2184,9 +2197,11 @@ func (s *SQLiteStorageService) SearchRequests(query string, modelFilter string, 
 
 // SearchUnified performs full-text search across all data types
 func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, limit, offset int, after, before string) (*model.UnifiedSearchResults, error) {
-	// If no types specified, search all
-	if len(dataTypes) == 0 {
-		dataTypes = []string{"requests", "conversations", "extensions", "todos", "plans"}
+	if s.hybrid != nil && s.hybrid.Search != nil {
+		dataTypes = s.hybrid.Search.NormalizeDataTypes(dataTypes)
+	} else if len(dataTypes) == 0 {
+		// [LAW:one-source-of-truth] Keep default search domains stable at one callsite.
+		dataTypes = []string{"conversations", "extensions", "todos", "plans"}
 	}
 
 	// Build a set for easier checking
@@ -2275,6 +2290,10 @@ func (s *SQLiteStorageService) SearchUnified(query string, dataTypes []string, l
 
 // GetIndexedConversations returns conversations from the database index - very fast
 func (s *SQLiteStorageService) GetIndexedConversations(limit int) ([]*model.IndexedConversation, error) {
+	if s.hybrid != nil && s.hybrid.Canonical != nil {
+		return s.hybrid.Canonical.GetIndexedConversations(limit)
+	}
+
 	query := `
 		SELECT id, project_path, project_name, start_time, end_time, message_count
 		FROM conversations
@@ -3421,6 +3440,10 @@ func (s *SQLiteStorageService) UpsertSessionsForConversation(conversationID stri
 
 // GetSessions returns a paginated list of sessions ordered by started_at descending
 func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session, error) {
+	if s.hybrid != nil && s.hybrid.Canonical != nil {
+		return s.hybrid.Canonical.GetSessions(limit, offset)
+	}
+
 	query := `
 		SELECT id, project_path, started_at, ended_at,
 		       conversation_count, message_count, agent_count, todo_count,
@@ -3480,6 +3503,10 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 
 // GetSession returns a single session by ID
 func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, error) {
+	if s.hybrid != nil && s.hybrid.Canonical != nil {
+		return s.hybrid.Canonical.GetSession(sessionID)
+	}
+
 	query := `
 		SELECT id, project_path, started_at, ended_at,
 		       conversation_count, message_count, agent_count, todo_count,

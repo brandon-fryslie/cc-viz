@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/brandon-fryslie/cc-viz/internal/config"
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestConversationIndexer(t *testing.T) {
@@ -32,10 +32,7 @@ func TestConversationIndexer(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage, ok := storage.(*SQLiteStorageService)
-	if !ok {
-		t.Fatal("Storage must be SQLite")
-	}
+	sqliteStorage := storage
 
 	// Create indexer
 	indexer, err := NewConversationIndexer(sqliteStorage)
@@ -171,10 +168,7 @@ func TestNeedsIndexing(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage, ok := storage.(*SQLiteStorageService)
-	if !ok {
-		t.Fatal("Storage must be SQLite")
-	}
+	sqliteStorage := storage
 
 	// Create indexer
 	indexer, err := NewConversationIndexer(sqliteStorage)
@@ -250,10 +244,7 @@ func TestIndexerWithRealData(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage, ok := storage.(*SQLiteStorageService)
-	if !ok {
-		t.Fatal("Storage must be SQLite")
-	}
+	sqliteStorage := storage
 
 	// Create indexer
 	indexer, err := NewConversationIndexer(sqliteStorage)
@@ -406,10 +397,7 @@ func TestSearchIndexedConversations(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage, ok := storage.(*SQLiteStorageService)
-	if !ok {
-		t.Fatal("Storage must be SQLite")
-	}
+	sqliteStorage := storage
 
 	// Create indexer
 	indexer, err := NewConversationIndexer(sqliteStorage)
@@ -523,10 +511,7 @@ func TestFileWatcherDetectsChanges(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage, ok := storage.(*SQLiteStorageService)
-	if !ok {
-		t.Fatal("Storage must be SQLite")
-	}
+	sqliteStorage := storage
 
 	// Create a custom indexer with a test directory
 	watcher, err := fsnotify.NewWatcher()

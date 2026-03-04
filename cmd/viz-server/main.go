@@ -35,12 +35,7 @@ func main() {
 	logger.Println("SQLite database ready")
 
 	// Start conversation indexer (fail-fast on error)
-	sqliteStorage, ok := storageService.(*service.SQLiteStorageService)
-	if !ok {
-		logger.Fatalf("Storage service must be SQLite for indexer support")
-	}
-
-	indexer, err := service.NewConversationIndexer(sqliteStorage)
+	indexer, err := service.NewConversationIndexer(storageService)
 	if err != nil {
 		logger.Fatalf("Failed to create conversation indexer: %v", err)
 	}
@@ -52,7 +47,7 @@ func main() {
 	logger.Println("Conversation indexer started")
 
 	// Start subagent indexer
-	subagentIndexer, err := service.NewSubagentIndexer(sqliteStorage)
+	subagentIndexer, err := service.NewSubagentIndexer(storageService)
 	if err != nil {
 		logger.Fatalf("Failed to create subagent indexer: %v", err)
 	}
@@ -191,7 +186,6 @@ func main() {
 	go func() {
 		logger.Printf("viz-server running on http://localhost:%s", port)
 		logger.Printf("Dashboard API endpoints available at:")
-		logger.Printf("   - GET  /api/requests (Request data)")
 		logger.Printf("   - GET  /api/stats (Statistics)")
 		logger.Printf("   - GET  /api/conversations (Conversations)")
 		logger.Printf("   - GET  /api/v2/* (V2 API)")
@@ -207,7 +201,7 @@ func main() {
 	// for already-indexed records, instead of gating server startup on heavy work.
 	startupCtx, cancelStartup := context.WithCancel(context.Background())
 	defer cancelStartup()
-	startBackgroundArtifactProcessing(startupCtx, logger, sqliteStorage)
+	startBackgroundArtifactProcessing(startupCtx, logger, storageService)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

@@ -11,6 +11,8 @@ frontend/dist/
 *.bak*
 *.backup
 /viz-server
+/bin/viz-server
+/backups/
 /requests.db.backup-pre-gorm
 /requests.db.backup-pre-gorm-shm
 /requests.db.backup-pre-gorm-wal

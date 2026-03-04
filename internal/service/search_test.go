@@ -30,10 +30,7 @@ func TestSearchConversations(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage, ok := storage.(*SQLiteStorageService)
-	if !ok {
-		t.Fatal("Storage must be SQLite")
-	}
+	sqliteStorage := storage
 
 	// Insert test conversations
 	tx, err := sqliteStorage.db.Begin()

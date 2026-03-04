@@ -21,7 +21,6 @@ import (
 )
 
 // DataHandler handles all data and dashboard API endpoints:
-// - /api/requests/* - Request data endpoints
 // - /api/stats/* - Statistics endpoints
 // - /api/conversations/* - Conversation endpoints
 // - /api/v2/* - V2 API endpoints

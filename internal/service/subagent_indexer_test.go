@@ -22,7 +22,7 @@ func TestSubagentIndexer_FindParentAgentID(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage := storage.(*SQLiteStorageService)
+	sqliteStorage := storage
 	indexer, err := NewSubagentIndexer(sqliteStorage)
 	if err != nil {
 		t.Fatalf("Failed to create indexer: %v", err)
@@ -52,13 +52,13 @@ func TestSubagentIndexer_FindParentAgentID(t *testing.T) {
 		wantParent  string // Expected parent agent ID (if not nil)
 	}{
 		{
-			name: "root-spawned agent",
+			name:       "root-spawned agent",
 			parentData: `{"agentId":"","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"Done.\nagentId: abc (internal ID)"}]}]}}` + "\n",
 			agentID:    "abc",
 			wantNil:    true, // Root spawned → nil
 		},
 		{
-			name: "nested agent spawned by parent-xyz",
+			name:       "nested agent spawned by parent-xyz",
 			parentData: `{"agentId":"parent-xyz","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"Result\nagentId: abc (internal)"}]}]}}` + "\n",
 			agentID:    "abc",
 			wantNil:    false,
@@ -143,7 +143,7 @@ func TestSubagentIndexer_IndexFile(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage := storage.(*SQLiteStorageService)
+	sqliteStorage := storage
 	indexer, err := NewSubagentIndexer(sqliteStorage)
 	if err != nil {
 		t.Fatalf("Failed to create indexer: %v", err)
@@ -220,7 +220,7 @@ func TestSubagentIndexer_NeedsIndexing(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage := storage.(*SQLiteStorageService)
+	sqliteStorage := storage
 	indexer, err := NewSubagentIndexer(sqliteStorage)
 	if err != nil {
 		t.Fatalf("Failed to create indexer: %v", err)
@@ -289,7 +289,7 @@ func TestSubagentIndexer_InitialIndex(t *testing.T) {
 	}
 	defer storage.Close()
 
-	sqliteStorage := storage.(*SQLiteStorageService)
+	sqliteStorage := storage
 	indexer, err := NewSubagentIndexer(sqliteStorage)
 	if err != nil {
 		t.Fatalf("Failed to create indexer: %v", err)

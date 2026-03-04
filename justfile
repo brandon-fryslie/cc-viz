@@ -54,6 +54,10 @@ typecheck:
 # Lint and typecheck
 check: lint typecheck
 
+# Verify deferred test inventory is in sync with skipped tests
+check-deferred-tests:
+    ./scripts/check-deferred-tests.sh
+
 # Clean build artifacts
 clean:
     rm -rf bin/
