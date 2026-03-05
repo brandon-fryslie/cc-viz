@@ -35,7 +35,7 @@ export function ConversationDetailPage({ conversationId }: { conversationId: str
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="swing">
         <Group justify="space-between">
         <div>
           <Title order={2}>Conversation</Title>
@@ -45,20 +45,24 @@ export function ConversationDetailPage({ conversationId }: { conversationId: str
         </Group>
       </MotionSection>
 
-      <MotionCard>
+      <MotionCard flavor="orbit" index={0}>
         <Card withBorder>
           <Text size="sm" c="dimmed">{data.file_path}</Text>
         </Card>
       </MotionCard>
 
-      <MotionCard>
+      <MotionCard flavor="flip" index={1}>
         <Card withBorder>
         <ScrollArea h={620}>
           <Stack>
-            {data.conversation.messages.map((message) => {
+            {data.conversation.messages.map((message, index) => {
               const summary = summarizeMessage(message)
               return (
-                <MotionListItem key={message.uuid}>
+                <MotionListItem
+                  key={message.uuid}
+                  index={index}
+                  flavor={index % 3 === 0 ? 'orbit' : index % 3 === 1 ? 'flip' : 'pulse'}
+                >
                   <Card withBorder>
                   <Group justify="space-between" mb="xs">
                     <Group gap="xs">

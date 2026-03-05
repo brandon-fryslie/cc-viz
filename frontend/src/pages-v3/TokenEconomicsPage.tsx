@@ -45,7 +45,7 @@ export function TokenEconomicsPage() {
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="spiral">
         <Group justify="space-between">
         <div>
           <Title order={2}>Token Economics</Title>
@@ -62,7 +62,7 @@ export function TokenEconomicsPage() {
 
       <Grid>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard>
+          <MotionCard flavor="orbit" index={0}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Total Tokens</Text>
               <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.total_tokens || 0)}</Title>
@@ -70,7 +70,7 @@ export function TokenEconomicsPage() {
           </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard>
+          <MotionCard flavor="flip" index={1}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Burn / Day</Text>
               <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.burn_rate_per_day || 0)}</Title>
@@ -78,7 +78,7 @@ export function TokenEconomicsPage() {
           </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard>
+          <MotionCard flavor="tilt" index={2}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Peak Day</Text>
               <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.peak_day_tokens || 0)}</Title>
@@ -87,7 +87,7 @@ export function TokenEconomicsPage() {
           </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard>
+          <MotionCard flavor="pulse" index={3}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Trend</Text>
               <Title order={3}>{summaryLoading ? '--' : `${summary?.trend_percent || 0}%`}</Title>
@@ -98,7 +98,8 @@ export function TokenEconomicsPage() {
 
       <Grid>
         <Grid.Col span={{ base: 12, lg: 8 }}>
-          <Card withBorder>
+          <MotionCard flavor="orbit" index={4}>
+            <Card withBorder>
             <Text fw={600} mb="sm">Token Timeseries</Text>
             <div style={{ height: 340 }}>
               {seriesLoading ? (
@@ -115,11 +116,13 @@ export function TokenEconomicsPage() {
                 </ResponsiveContainer>
               )}
             </div>
-          </Card>
+            </Card>
+          </MotionCard>
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, lg: 4 }}>
-          <Card withBorder>
+          <MotionCard flavor="flip" index={5}>
+            <Card withBorder>
             <Text fw={600} mb="sm">Project Breakdown</Text>
             <div style={{ height: 340 }}>
               {projectsLoading ? (
@@ -136,11 +139,13 @@ export function TokenEconomicsPage() {
                 </ResponsiveContainer>
               )}
             </div>
-          </Card>
+            </Card>
+          </MotionCard>
         </Grid.Col>
       </Grid>
 
-      <Card withBorder>
+      <MotionCard flavor="tilt" index={6}>
+        <Card withBorder>
         <Group justify="space-between" mb="sm">
           <Text fw={600}>Top Consumers</Text>
           <FreshnessBadges freshness={projectFreshness} label="Table" />
@@ -163,7 +168,8 @@ export function TokenEconomicsPage() {
             ))}
           </Table.Tbody>
         </Table>
-      </Card>
+        </Card>
+      </MotionCard>
     </Stack>
   )
 }

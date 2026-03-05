@@ -26,7 +26,7 @@ export function OverviewPage() {
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="spiral">
         <Group justify="space-between">
         <div>
           <Title order={2}>Overview</Title>
@@ -47,9 +47,12 @@ export function OverviewPage() {
           { label: 'Total Messages', value: kpis?.total_messages ?? 0 },
           { label: 'Window Tokens', value: kpis?.total_tokens_window ?? 0 },
           { label: 'Avg Tokens/Session', value: kpis?.avg_tokens_per_session ?? 0 },
-        ].map((item) => (
+        ].map((item, index) => (
           <Grid.Col key={item.label} span={{ base: 12, sm: 6, lg: 4 }}>
-            <MotionCard>
+            <MotionCard
+              index={index}
+              flavor={index % 4 === 0 ? 'orbit' : index % 4 === 1 ? 'flip' : index % 4 === 2 ? 'tilt' : 'pulse'}
+            >
               <Card withBorder className={overviewFreshness.getItemClassName('overview')}>
                 <Text size="sm" c="dimmed">{item.label}</Text>
                 <Title order={3}>{isLoading ? '--' : item.value.toLocaleString()}</Title>
@@ -59,7 +62,7 @@ export function OverviewPage() {
         ))}
       </Grid>
 
-      <MotionSection delay={0.1}>
+      <MotionSection delay={0.1} variant="swing">
         <Card withBorder>
         <Stack gap="sm">
           <Text fw={600}>Quick Links</Text>

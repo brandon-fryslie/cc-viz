@@ -32,7 +32,7 @@ export function MissionControlPage() {
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="swing">
         <Group justify="space-between">
         <div>
           <Title order={2}>Mission Control</Title>
@@ -48,7 +48,7 @@ export function MissionControlPage() {
 
       <Grid>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <MotionCard>
+          <MotionCard flavor="orbit" index={0}>
             <Card withBorder>
               <Text c="dimmed" size="sm">Active Sessions</Text>
               <Title order={3}>{isLoading ? '--' : (data?.kpis.active_sessions ?? 0).toLocaleString()}</Title>
@@ -56,7 +56,7 @@ export function MissionControlPage() {
           </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <MotionCard>
+          <MotionCard flavor="flip" index={1}>
             <Card withBorder>
               <Text c="dimmed" size="sm">Window Tokens</Text>
               <Title order={3}>{isLoading ? '--' : (data?.kpis.total_tokens_window ?? 0).toLocaleString()}</Title>
@@ -64,7 +64,7 @@ export function MissionControlPage() {
           </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <MotionCard>
+          <MotionCard flavor="pulse" index={2}>
             <Card withBorder>
               <Text c="dimmed" size="sm">Health</Text>
               <Group mt="xs">
@@ -131,8 +131,12 @@ export function MissionControlPage() {
                   ) : (activityData?.events || []).length === 0 ? (
                     <Text size="sm" c="dimmed">No activity events.</Text>
                   ) : (
-                    (activityData?.events || []).map((event) => (
-                      <MotionListItem key={event.id}>
+                    (activityData?.events || []).map((event, index) => (
+                      <MotionListItem
+                        key={event.id}
+                        index={index}
+                        flavor={index % 3 === 0 ? 'orbit' : index % 3 === 1 ? 'flip' : 'pulse'}
+                      >
                         <Card withBorder padding="sm" className={activityFreshness.getItemClassName(event.id)}>
                         <Group justify="space-between">
                           <Badge variant="outline">{event.type}</Badge>

@@ -10,21 +10,21 @@ export function PlanDetailPage({ planId }: { planId: string }) {
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="spiral">
         <div>
           <Title order={2}>Plan</Title>
           <Text c="dimmed">{data.display_name}</Text>
         </div>
       </MotionSection>
 
-      <MotionCard>
+      <MotionCard flavor="orbit" index={0}>
         <Card withBorder>
           <Text size="sm" c="dimmed">{data.file_name}</Text>
           <Text mt="xs">{data.preview}</Text>
         </Card>
       </MotionCard>
 
-      <MotionCard>
+      <MotionCard flavor="flip" index={1}>
         <Card withBorder>
           <Code block>{data.content}</Code>
         </Card>

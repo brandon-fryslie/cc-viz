@@ -19,7 +19,7 @@ import { parseFocusFromSearch } from '@/lib/deep-links'
 import { useV3Session, useV3SessionMessages, useV3Sessions } from '@/lib/api-v3'
 import { useLiveTopic } from '@/lib/live/LiveProvider'
 import { useListFreshness } from '@/lib/live/useListFreshness'
-import { MotionCard, MotionSection } from '@/lib/motion/primitives'
+import { MotionCard, MotionListItem, MotionSection } from '@/lib/motion/primitives'
 
 interface SessionsExplorerPageProps {
   sessionId?: string
@@ -179,7 +179,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="swing">
         <Group justify="space-between">
         <div>
           <Title order={2}>Sessions Explorer</Title>
@@ -192,7 +192,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
 
       <Grid>
         <Grid.Col span={{ base: 12, lg: 3 }}>
-          <MotionCard>
+          <MotionCard flavor="orbit" index={0}>
             <Card withBorder>
             <Stack>
               <FreshnessBadges freshness={sessionsFreshness} label="Session list" />
@@ -207,22 +207,27 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                 <Stack gap="xs">
                   {sessionsLoading ? (
                     <Text size="sm" c="dimmed">Loading sessions...</Text>
-                  ) : (sessionList?.sessions || []).map((session) => (
-                    <Card
+                  ) : (sessionList?.sessions || []).map((session, index) => (
+                    <MotionListItem
                       key={session.id}
-                      className={sessionsFreshness.getItemClassName(session.id)}
-                      withBorder
-                      padding="sm"
-                      style={{ cursor: 'pointer', borderColor: selectedSessionId === session.id ? 'var(--mantine-color-blue-5)' : undefined }}
-                      onClick={() => onSelectSession(session.id)}
+                      index={index}
+                      flavor={index % 3 === 0 ? 'flip' : index % 3 === 1 ? 'orbit' : 'pulse'}
                     >
-                      <Text fw={600}>{session.id.slice(0, 10)}</Text>
-                      <Text size="xs" c="dimmed" lineClamp={2}>{session.project_path || 'No project path'}</Text>
-                      <Group mt="xs" gap={6}>
-                        <Badge size="xs" variant="outline">msg {session.message_count}</Badge>
-                        <Badge size="xs" variant="outline">todo {session.todo_count}</Badge>
-                      </Group>
-                    </Card>
+                      <Card
+                        className={sessionsFreshness.getItemClassName(session.id)}
+                        withBorder
+                        padding="sm"
+                        style={{ cursor: 'pointer', borderColor: selectedSessionId === session.id ? 'var(--mantine-color-blue-5)' : undefined }}
+                        onClick={() => onSelectSession(session.id)}
+                      >
+                        <Text fw={600}>{session.id.slice(0, 10)}</Text>
+                        <Text size="xs" c="dimmed" lineClamp={2}>{session.project_path || 'No project path'}</Text>
+                        <Group mt="xs" gap={6}>
+                          <Badge size="xs" variant="outline">msg {session.message_count}</Badge>
+                          <Badge size="xs" variant="outline">todo {session.todo_count}</Badge>
+                        </Group>
+                      </Card>
+                    </MotionListItem>
                   ))}
                 </Stack>
               </ScrollArea>
@@ -232,7 +237,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, lg: 6 }}>
-          <MotionCard>
+          <MotionCard flavor="flip" index={1}>
             <Card withBorder>
             {detailLoading ? (
               <Text size="sm" c="dimmed">Loading session detail...</Text>
@@ -332,7 +337,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, lg: 3 }}>
-          <MotionCard>
+          <MotionCard flavor="pulse" index={2}>
             <Card withBorder>
             <Stack>
               <Text fw={600}>Artifact Detail</Text>

@@ -18,14 +18,14 @@ export function SearchPage() {
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="spiral">
         <div>
         <Title order={2}>Search</Title>
         <Text c="dimmed">Search everything and deep-link directly to resource artifacts.</Text>
         </div>
       </MotionSection>
 
-      <MotionSection delay={0.05}>
+      <MotionSection delay={0.05} variant="swing">
         <TextInput
           id="search-page-query"
           name="search-page-query"
@@ -44,8 +44,12 @@ export function SearchPage() {
       ) : (
         <ScrollArea h={680}>
           <Stack>
-            {groups.map(([name, section]) => (
-              <MotionCard key={name}>
+            {groups.map(([name, section], groupIndex) => (
+              <MotionCard
+                key={name}
+                index={groupIndex}
+                flavor={groupIndex % 4 === 0 ? 'flip' : groupIndex % 4 === 1 ? 'orbit' : groupIndex % 4 === 2 ? 'tilt' : 'pulse'}
+              >
                 <Card withBorder>
                 <Stack gap="xs">
                   <Group justify="space-between">
@@ -56,7 +60,11 @@ export function SearchPage() {
                   {section.results.map((result, index) => {
                     const route = routeFromSearchResult(result)
                     return (
-                      <MotionListItem key={`${name}-${index}`}>
+                      <MotionListItem
+                        key={`${name}-${index}`}
+                        index={index}
+                        flavor={index % 3 === 0 ? 'orbit' : index % 3 === 1 ? 'flip' : 'pulse'}
+                      >
                         <Button
                           variant="subtle"
                           justify="flex-start"

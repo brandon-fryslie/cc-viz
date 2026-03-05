@@ -117,7 +117,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
 
   return (
     <Stack>
-      <MotionSection>
+      <MotionSection variant="swing">
         <Group justify="space-between">
         <div>
           <Title order={2}>Extensions & Config</Title>
@@ -130,7 +130,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
 
       <Grid>
         <Grid.Col span={{ base: 12, lg: 3 }}>
-          <MotionCard>
+          <MotionCard flavor="orbit" index={0}>
             <Card withBorder>
             <Stack>
               <Text fw={600}>Filters</Text>
@@ -182,7 +182,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, lg: 9 }}>
-          <MotionCard>
+          <MotionCard flavor="flip" index={1}>
             <Card withBorder>
             {isLoading ? (
               <Text c="dimmed">Loading extensions...</Text>
@@ -231,7 +231,7 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
         </Grid.Col>
       </Grid>
 
-      <MotionSection delay={0.1}>
+      <MotionSection delay={0.1} variant="spiral">
         <Card withBorder>
         <Tabs value={configTab} onChange={(value) => setConfigTab(value || 'claude_md')}>
           <Tabs.List>

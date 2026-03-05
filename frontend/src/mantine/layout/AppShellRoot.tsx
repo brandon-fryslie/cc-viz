@@ -92,12 +92,23 @@ export function AppShellRoot() {
         data-motion={motionEnabled ? 'on' : 'off'}
       >
         <AppShell.Header>
+          <motion.div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              background: 'linear-gradient(120deg, rgba(59,130,246,0.14), rgba(34,211,238,0.1), rgba(59,130,246,0.14))',
+            }}
+            animate={shouldAnimate ? { backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'] } : undefined}
+            transition={{ duration: 12, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+          />
           <Group h="100%" px="md" justify="space-between">
             <Group>
               <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
               <motion.div
-                animate={shouldAnimate ? { y: [0, -2, 0], scale: [1, 1.04, 1], rotate: [0, -1, 0] } : undefined}
-                transition={{ duration: 2.4, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                animate={shouldAnimate ? { y: [0, -6, 2, -3, 0], scale: [1, 1.08, 0.98, 1.06, 1], rotate: [0, -2, 1.5, -1, 0] } : undefined}
+                transition={{ duration: 3.2, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
               >
                 <Title order={4}>CC-Viz</Title>
               </motion.div>
@@ -126,9 +137,14 @@ export function AppShellRoot() {
                 {motionEnabled ? 'MAX' : 'OFF'}
               </Badge>
               <Group gap={6}>
-                <Badge color={connected ? 'green' : 'red'} variant="dot">
-                  {connected ? 'Live' : 'Offline'}
-                </Badge>
+                <motion.div
+                  animate={shouldAnimate ? { scale: [1, 1.12, 1], y: [0, -2, 0] } : undefined}
+                  transition={{ duration: 1.8, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                >
+                  <Badge color={connected ? 'green' : 'red'} variant="dot">
+                    {connected ? 'Live' : 'Offline'}
+                  </Badge>
+                </motion.div>
                 <Text size="xs" c="dimmed">
                   {lastHeartbeat ? new Date(lastHeartbeat).toLocaleTimeString() : 'No heartbeat'}
                 </Text>
@@ -146,7 +162,7 @@ export function AppShellRoot() {
           <AppShell.Section grow component={ScrollArea}>
             <Stack gap={4}>
               {navItems.map((item) => (
-                <MotionListItem key={item.href}>
+                <MotionListItem key={item.href} flavor={item.href.length % 2 === 0 ? 'orbit' : 'flip'}>
                   <NavLink
                     label={item.label}
                     leftSection={<item.icon size={18} stroke={1.7} />}
@@ -196,7 +212,8 @@ export function AppShellRoot() {
             <ScrollArea h={420}>
               <Stack gap="sm">
                 {resultGroups.map(([group, section]) => (
-                  <Card key={group} withBorder>
+                  <MotionListItem key={group} flavor="pulse">
+                    <Card withBorder>
                     <Stack gap="xs">
                       <Group justify="space-between">
                         <Text fw={600} tt="capitalize">{group}</Text>
@@ -228,7 +245,8 @@ export function AppShellRoot() {
                         )
                       })}
                     </Stack>
-                  </Card>
+                    </Card>
+                  </MotionListItem>
                 ))}
               </Stack>
             </ScrollArea>

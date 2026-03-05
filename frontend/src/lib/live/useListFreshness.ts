@@ -77,10 +77,13 @@ export function useListFreshness<T>(items: T[] | undefined, options: UseListFres
     setState({ entries: EMPTY_ENTRIES, removedNotice: null, lastUpdatedAt: null })
   }, [options.scopeKey])
 
-  const list = items ?? []
-
   useEffect(() => {
-    const nextMap = buildMap(list, getIdRef.current, getHashRef.current)
+    // [LAW:dataflow-not-control-flow] The first resolved dataset becomes baseline state, not a "new data" event.
+    if (items === undefined) {
+      return
+    }
+
+    const nextMap = buildMap(items, getIdRef.current, getHashRef.current)
 
     if (!initializedRef.current) {
       baselineRef.current = nextMap
@@ -139,7 +142,7 @@ export function useListFreshness<T>(items: T[] | undefined, options: UseListFres
         lastUpdatedAt: now,
       }
     })
-  }, [list, ttlMs])
+  }, [items, ttlMs])
 
   useEffect(() => {
     const now = Date.now()
