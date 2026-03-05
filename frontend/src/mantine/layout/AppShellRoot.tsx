@@ -102,7 +102,7 @@ export function AppShellRoot() {
                   rotate: [0, -5, 3, -4, 2, 0],
                   skewX:  [0, 4, -3, 2, 0],
                 } : undefined}
-                transition={{ duration: 2.4, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                transition={{ duration: 1.1, ease: 'easeOut' }}
                 whileHover={shouldAnimate ? { scale: 1.4, rotate: 15, y: -8, filter: 'hue-rotate(45deg)' } : undefined}
                 whileTap={shouldAnimate ? { scale: 0.7, rotate: -30 } : undefined}
                 style={{ cursor: shouldAnimate ? 'pointer' : 'default' }}
@@ -142,7 +142,7 @@ export function AppShellRoot() {
                     y:      [0, -5, 2, -4, 1, 0],
                     rotate: [0, -3, 3, -2, 0],
                   } : undefined}
-                  transition={{ duration: 1.4, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                  transition={{ duration: 0.9, ease: 'easeOut' }}
                   whileHover={shouldAnimate ? { scale: 1.35, rotate: 10 } : undefined}
                 >
                   <Badge color={connected ? 'green' : 'red'} variant="dot">

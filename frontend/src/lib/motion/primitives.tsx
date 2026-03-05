@@ -179,17 +179,6 @@ const CARD_ENTRIES: Record<MotionFlavor, TargetAndTransition> = {
   ricochet: { opacity:0, x:280, rotate:28, scale:0.5         },
 }
 
-const CARD_SPRINGS: Record<MotionFlavor, Transition> = {
-  tilt:     SPRING_BOUNCY,
-  flip:     SPRING_INSANE,
-  orbit:    SPRING_JELLO,
-  pulse:    SPRING_INSANE,
-  slam:     SPRING_BOUNCY,
-  elastic:  SPRING_SNAPPY,
-  vortex:   SPRING_JELLO,
-  ricochet: SPRING_SNAPPY,
-}
-
 interface CardConfig {
   flavor:    MotionFlavor
   tiltRange: number   // mouse tilt degrees
@@ -199,9 +188,9 @@ interface CardConfig {
   idleRot:   number   // max idle rotation
 }
 
-function randomCardConfig(): CardConfig {
+function randomCardConfig(flavorOverride?: MotionFlavor): CardConfig {
   return {
-    flavor:    pick(ALL_FLAVORS),
+    flavor:    flavorOverride ?? pick(ALL_FLAVORS),
     tiltRange: rnd(10, 28),
     spring:    randomSpring(),
     idleDur:   rnd(2.4, 6.5),
@@ -220,17 +209,18 @@ function cardIdle(cfg: CardConfig): TargetAndTransition {
     case 'pulse':    return { scale:[1,1+0.06*a,1,1+0.03*a,1], filter:['brightness(1)',`brightness(${1+0.15*a})`, 'brightness(1)'] }
     case 'slam':     return { y:[0,-8*a,2*a,-4*a,0], scale:[1,1+0.02*a,0.99,1] }
     case 'elastic':  return { scaleY:[1,1+0.04*a,1-0.03*a,1+0.02*a,1], scaleX:[1,1-0.03*a,1+0.03*a,0.99,1] }
-    case 'vortex':   return { rotate:[0,360] }  // perpetual spin
+    case 'vortex':   return { rotate:[0, 24 * a, -14 * a, 8 * a, 0], y:[0, -4 * a, 2 * a, 0] }
     case 'ricochet': return { x:[0,4*a,-3*a,2*a,0], rotate:[0,r,-r*0.7,r*0.3,0] }
     default:         return { y:[0,-4*a,0,4*a,0] }
   }
 }
 
 function cardIdleTransition(cfg: CardConfig): Transition {
+  // [LAW:dataflow-not-control-flow] Always run the same idle phase; values decide intensity and timing.
   if (cfg.flavor === 'vortex') {
-    return { duration: cfg.idleDur * 1.8, repeat: Infinity, ease: 'linear' as const }
+    return { duration: cfg.idleDur * 1.1, ease: 'easeOut' as const }
   }
-  return { duration: cfg.idleDur, repeat: Infinity, ease: 'easeInOut' as const, repeatType: 'mirror' as const }
+  return { duration: cfg.idleDur, ease: 'easeOut' as const }
 }
 
 export function MotionCard({
@@ -244,7 +234,7 @@ export function MotionCard({
   // All hooks unconditional — rules of hooks
   const ref = useRef<HTMLDivElement>(null)
   const cfgRef = useRef<CardConfig | null>(null)
-  if (!cfgRef.current) cfgRef.current = randomCardConfig()
+  if (!cfgRef.current) cfgRef.current = randomCardConfig(flavor)
   const cfg = cfgRef.current
 
   const tiltRange = cfg.tiltRange
