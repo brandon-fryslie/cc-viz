@@ -27,6 +27,17 @@ function summarizeMessage(message: {
   return { role, preview: '' }
 }
 
+function formatTokens(value: number | undefined): string {
+  const numeric = value ?? 0
+  if (numeric >= 1_000_000) return `${(numeric / 1_000_000).toFixed(1)}M`
+  if (numeric >= 1_000) return `${(numeric / 1_000).toFixed(1)}K`
+  return String(numeric)
+}
+
+function formatPercent(value: number | undefined): string {
+  return `${(value ?? 0).toFixed(1)}%`
+}
+
 export function ConversationDetailPage({ conversationId }: { conversationId: string }) {
   const { data, isLoading, error } = useV3Conversation(conversationId)
 
@@ -47,7 +58,17 @@ export function ConversationDetailPage({ conversationId }: { conversationId: str
 
       <MotionCard flavor="orbit" index={0}>
         <Card withBorder>
-          <Text size="sm" c="dimmed">{data.file_path}</Text>
+          <Stack gap="xs">
+            <Text size="sm" c="dimmed">{data.file_path}</Text>
+            <Group gap="xs">
+              <Badge variant="light">Total {formatTokens(data.token_summary.totalTokens)}</Badge>
+              <Badge variant="outline">Input {formatTokens(data.token_summary.inputTokens)}</Badge>
+              <Badge variant="outline">Output {formatTokens(data.token_summary.outputTokens)}</Badge>
+              <Badge variant="outline">Read {formatTokens(data.token_summary.cacheReadTokens)}</Badge>
+              <Badge variant="outline">Write {formatTokens(data.token_summary.cacheCreationTokens)}</Badge>
+              <Badge variant="light">Hit {formatPercent(data.token_summary.cacheHitRatePercent)}</Badge>
+            </Group>
+          </Stack>
         </Card>
       </MotionCard>
 

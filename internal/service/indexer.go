@@ -234,8 +234,8 @@ func (ci *ConversationIndexer) indexFile(filePath string) error {
 			uuid, conversation_id, parent_uuid, type, role, timestamp,
 			cwd, git_branch, session_id, agent_id, is_sidechain,
 			request_id, model, input_tokens, output_tokens,
-			cache_read_tokens, cache_creation_tokens, content_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			cache_read_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, content_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare message insert statement: %w", err)
@@ -270,7 +270,7 @@ func (ci *ConversationIndexer) indexFile(filePath string) error {
 		// Parse message content for additional fields
 		var msgContent MessageContent
 		var role, model string
-		var inputTokens, outputTokens, cacheRead, cacheCreation int
+		var inputTokens, outputTokens, cacheRead, cacheCreation, cacheCreation5m, cacheCreation1h int
 
 		if len(msg.Message) > 0 {
 			if err := json.Unmarshal(msg.Message, &msgContent); err == nil {
@@ -281,8 +281,16 @@ func (ci *ConversationIndexer) indexFile(filePath string) error {
 					outputTokens = msgContent.Usage.OutputTokens
 					cacheRead = msgContent.Usage.CacheReadInputTokens
 					cacheCreation = msgContent.Usage.CacheCreationInputTokens
+					if msgContent.Usage.CacheCreation != nil {
+						cacheCreation5m = msgContent.Usage.CacheCreation.Ephemeral5mInputTokens
+						cacheCreation1h = msgContent.Usage.CacheCreation.Ephemeral1hInputTokens
+					}
 				}
 			}
+		}
+
+		if cacheCreation > 0 && cacheCreation5m == 0 && cacheCreation1h == 0 {
+			cacheCreation5m = cacheCreation
 		}
 
 		// Insert full message data
@@ -309,6 +317,8 @@ func (ci *ConversationIndexer) indexFile(filePath string) error {
 			outputTokens,
 			cacheRead,
 			cacheCreation,
+			cacheCreation5m,
+			cacheCreation1h,
 			string(msg.Message),
 		)
 		if err != nil {

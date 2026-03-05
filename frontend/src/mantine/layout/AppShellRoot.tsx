@@ -33,7 +33,7 @@ import { useV3Search } from '@/lib/api-v3'
 import { routeFromSearchResult } from '@/lib/deep-links'
 import { useLive } from '@/lib/live/LiveProvider'
 import { useMotionPreference } from '@/lib/motion/MotionProvider'
-import { MotionListItem, MotionPage } from '@/lib/motion/primitives'
+import { MotionListItem, MotionPage, MotionText } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 interface NavItem {
@@ -92,25 +92,24 @@ export function AppShellRoot() {
         data-motion={motionEnabled ? 'on' : 'off'}
       >
         <AppShell.Header>
-          <motion.div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-              background: 'linear-gradient(120deg, rgba(59,130,246,0.14), rgba(34,211,238,0.1), rgba(59,130,246,0.14))',
-            }}
-            animate={shouldAnimate ? { backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'] } : undefined}
-            transition={{ duration: 12, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
-          />
           <Group h="100%" px="md" justify="space-between">
             <Group>
               <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
               <motion.div
-                animate={shouldAnimate ? { y: [0, -6, 2, -3, 0], scale: [1, 1.08, 0.98, 1.06, 1], rotate: [0, -2, 1.5, -1, 0] } : undefined}
-                transition={{ duration: 3.2, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                animate={shouldAnimate ? {
+                  y:      [0, -10, 4, -7, 2, 0],
+                  scale:  [1, 1.18, 0.92, 1.14, 0.97, 1],
+                  rotate: [0, -5, 3, -4, 2, 0],
+                  skewX:  [0, 4, -3, 2, 0],
+                } : undefined}
+                transition={{ duration: 2.4, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                whileHover={shouldAnimate ? { scale: 1.4, rotate: 15, y: -8, filter: 'hue-rotate(45deg)' } : undefined}
+                whileTap={shouldAnimate ? { scale: 0.7, rotate: -30 } : undefined}
+                style={{ cursor: shouldAnimate ? 'pointer' : 'default' }}
               >
-                <Title order={4}>CC-Viz</Title>
+                {shouldAnimate
+                  ? <MotionText text="CC-Viz" delay={0} />
+                  : <Title order={4}>CC-Viz</Title>}
               </motion.div>
             </Group>
             <Group>
@@ -138,8 +137,13 @@ export function AppShellRoot() {
               </Badge>
               <Group gap={6}>
                 <motion.div
-                  animate={shouldAnimate ? { scale: [1, 1.12, 1], y: [0, -2, 0] } : undefined}
-                  transition={{ duration: 1.8, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                  animate={shouldAnimate ? {
+                    scale:  [1, 1.2, 0.9, 1.15, 0.95, 1],
+                    y:      [0, -5, 2, -4, 1, 0],
+                    rotate: [0, -3, 3, -2, 0],
+                  } : undefined}
+                  transition={{ duration: 1.4, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+                  whileHover={shouldAnimate ? { scale: 1.35, rotate: 10 } : undefined}
                 >
                   <Badge color={connected ? 'green' : 'red'} variant="dot">
                     {connected ? 'Live' : 'Offline'}

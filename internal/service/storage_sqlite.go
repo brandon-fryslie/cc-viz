@@ -132,6 +132,14 @@ func dateFilterSQL(column, after, before string) (string, []interface{}) {
 	return clause, args
 }
 
+func promptCacheHitRatePercent(inputTokens, cacheReadTokens, cacheCreationTokens int64) float64 {
+	totalInput := inputTokens + cacheReadTokens + cacheCreationTokens
+	if totalInput <= 0 {
+		return 0
+	}
+	return (float64(cacheReadTokens) / float64(totalInput)) * 100
+}
+
 func (s *SQLiteStorageService) createTables() error {
 	// [LAW:one-source-of-truth] Runtime storage owns sessions/conversations artifacts only.
 	// Remove request-era schema objects if they still exist.
@@ -260,6 +268,8 @@ func (s *SQLiteStorageService) runConversationSearchMigrations() error {
 			output_tokens INTEGER DEFAULT 0,
 			cache_read_tokens INTEGER DEFAULT 0,
 			cache_creation_tokens INTEGER DEFAULT 0,
+			cache_creation_5m_tokens INTEGER DEFAULT 0,
+			cache_creation_1h_tokens INTEGER DEFAULT 0,
 			content_json TEXT,
 			tool_use_json TEXT,
 			tool_result_json TEXT,
@@ -280,6 +290,17 @@ func (s *SQLiteStorageService) runConversationSearchMigrations() error {
 
 		log.Println("✅ Created conversation_messages table")
 	}
+
+	// [LAW:one-source-of-truth] Prompt cache TTL split metrics are stored in canonical message rows.
+	s.db.Exec("ALTER TABLE conversation_messages ADD COLUMN cache_creation_5m_tokens INTEGER DEFAULT 0")
+	s.db.Exec("ALTER TABLE conversation_messages ADD COLUMN cache_creation_1h_tokens INTEGER DEFAULT 0")
+	s.db.Exec(`
+		UPDATE conversation_messages
+		SET cache_creation_5m_tokens = cache_creation_tokens
+		WHERE COALESCE(cache_creation_tokens, 0) > 0
+		  AND COALESCE(cache_creation_5m_tokens, 0) = 0
+		  AND COALESCE(cache_creation_1h_tokens, 0) = 0
+	`)
 
 	return nil
 }
@@ -1262,7 +1283,7 @@ func (s *SQLiteStorageService) GetConversationMessages(conversationID string, li
 		SELECT uuid, conversation_id, parent_uuid, type, role, timestamp,
 		       cwd, git_branch, session_id, agent_id, is_sidechain,
 		       request_id, model, input_tokens, output_tokens,
-		       cache_read_tokens, cache_creation_tokens, content_json
+		       cache_read_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, content_json
 		FROM conversation_messages
 		WHERE conversation_id = ?
 		ORDER BY timestamp ASC
@@ -1300,6 +1321,8 @@ func (s *SQLiteStorageService) GetConversationMessages(conversationID string, li
 			&msg.OutputTokens,
 			&msg.CacheReadTokens,
 			&msg.CacheCreationTokens,
+			&msg.CacheCreation5mTokens,
+			&msg.CacheCreation1hTokens,
 			&contentJSON,
 		)
 		if err != nil {
@@ -1372,7 +1395,7 @@ func (s *SQLiteStorageService) GetConversationMessagesWithSubagents(conversation
 		SELECT uuid, conversation_id, parent_uuid, type, role, timestamp,
 		       cwd, git_branch, session_id, agent_id, is_sidechain,
 		       request_id, model, input_tokens, output_tokens,
-		       cache_read_tokens, cache_creation_tokens, content_json
+		       cache_read_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, content_json
 		FROM conversation_messages
 		WHERE conversation_id = ? OR session_id = ?
 		ORDER BY timestamp ASC
@@ -1410,6 +1433,8 @@ func (s *SQLiteStorageService) GetConversationMessagesWithSubagents(conversation
 			&msg.OutputTokens,
 			&msg.CacheReadTokens,
 			&msg.CacheCreationTokens,
+			&msg.CacheCreation5mTokens,
+			&msg.CacheCreation1hTokens,
 			&contentJSON,
 		)
 		if err != nil {
@@ -2330,11 +2355,39 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 	}
 
 	query := `
-		SELECT id, project_path, started_at, ended_at,
+		SELECT sessions.id, sessions.project_path, sessions.started_at, sessions.ended_at,
 		       conversation_count, message_count, agent_count, todo_count,
-		       COALESCE(created_at, started_at, CURRENT_TIMESTAMP) AS created_at
+		       COALESCE(created_at, started_at, CURRENT_TIMESTAMP) AS created_at,
+		       COALESCE(token_agg.total_tokens, 0) as total_tokens,
+		       COALESCE(token_agg.input_tokens, 0) as input_tokens,
+		       COALESCE(token_agg.output_tokens, 0) as output_tokens,
+		       COALESCE(token_agg.cache_read_tokens, 0) as cache_read_tokens,
+		       COALESCE(token_agg.cache_creation_tokens, 0) as cache_creation_tokens
 		FROM sessions
-		ORDER BY started_at DESC
+		LEFT JOIN (
+			SELECT
+				session_key,
+				SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) as total_tokens,
+				SUM(input_tokens) as input_tokens,
+				SUM(output_tokens) as output_tokens,
+				SUM(cache_read_tokens) as cache_read_tokens,
+				SUM(cache_creation_tokens) as cache_creation_tokens
+			FROM (
+				SELECT
+					COALESCE(NULLIF(session_id, ''), NULLIF(agent_id, '')) as session_key,
+					COALESCE(request_id, uuid) as dedup_key,
+					MAX(input_tokens) as input_tokens,
+					MAX(output_tokens) as output_tokens,
+					MAX(cache_read_tokens) as cache_read_tokens,
+					MAX(cache_creation_tokens) as cache_creation_tokens
+				FROM conversation_messages
+				WHERE role IN ('user', 'assistant')
+				  AND COALESCE(NULLIF(session_id, ''), NULLIF(agent_id, '')) IS NOT NULL
+				GROUP BY session_key, dedup_key
+			)
+			GROUP BY session_key
+		) token_agg ON token_agg.session_key = sessions.id
+		ORDER BY sessions.started_at DESC
 		LIMIT ? OFFSET ?
 	`
 
@@ -2359,6 +2412,11 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 			&session.AgentCount,
 			&session.TodoCount,
 			&createdAt,
+			&session.TotalTokens,
+			&session.InputTokens,
+			&session.OutputTokens,
+			&session.CacheReadTokens,
+			&session.CacheWriteTokens,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan session row: %w", err)
@@ -2379,6 +2437,7 @@ func (s *SQLiteStorageService) GetSessions(limit, offset int) ([]*model.Session,
 		if t, ok := parseDBTime(createdAt); ok {
 			session.CreatedAt = t
 		}
+		session.CacheHitRatePercent = promptCacheHitRatePercent(session.InputTokens, session.CacheReadTokens, session.CacheWriteTokens)
 
 		sessions = append(sessions, &session)
 	}
@@ -2393,11 +2452,39 @@ func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, err
 	}
 
 	query := `
-		SELECT id, project_path, started_at, ended_at,
+		SELECT sessions.id, sessions.project_path, sessions.started_at, sessions.ended_at,
 		       conversation_count, message_count, agent_count, todo_count,
-		       COALESCE(created_at, started_at, CURRENT_TIMESTAMP) AS created_at
+		       COALESCE(created_at, started_at, CURRENT_TIMESTAMP) AS created_at,
+		       COALESCE(token_agg.total_tokens, 0) as total_tokens,
+		       COALESCE(token_agg.input_tokens, 0) as input_tokens,
+		       COALESCE(token_agg.output_tokens, 0) as output_tokens,
+		       COALESCE(token_agg.cache_read_tokens, 0) as cache_read_tokens,
+		       COALESCE(token_agg.cache_creation_tokens, 0) as cache_creation_tokens
 		FROM sessions
-		WHERE id = ?
+		LEFT JOIN (
+			SELECT
+				session_key,
+				SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) as total_tokens,
+				SUM(input_tokens) as input_tokens,
+				SUM(output_tokens) as output_tokens,
+				SUM(cache_read_tokens) as cache_read_tokens,
+				SUM(cache_creation_tokens) as cache_creation_tokens
+			FROM (
+				SELECT
+					COALESCE(NULLIF(session_id, ''), NULLIF(agent_id, '')) as session_key,
+					COALESCE(request_id, uuid) as dedup_key,
+					MAX(input_tokens) as input_tokens,
+					MAX(output_tokens) as output_tokens,
+					MAX(cache_read_tokens) as cache_read_tokens,
+					MAX(cache_creation_tokens) as cache_creation_tokens
+				FROM conversation_messages
+				WHERE role IN ('user', 'assistant')
+				  AND COALESCE(NULLIF(session_id, ''), NULLIF(agent_id, '')) IS NOT NULL
+				GROUP BY session_key, dedup_key
+			)
+			GROUP BY session_key
+		) token_agg ON token_agg.session_key = sessions.id
+		WHERE sessions.id = ?
 	`
 
 	var session model.Session
@@ -2413,6 +2500,11 @@ func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, err
 		&session.AgentCount,
 		&session.TodoCount,
 		&createdAt,
+		&session.TotalTokens,
+		&session.InputTokens,
+		&session.OutputTokens,
+		&session.CacheReadTokens,
+		&session.CacheWriteTokens,
 	)
 
 	if err == sql.ErrNoRows {
@@ -2437,6 +2529,7 @@ func (s *SQLiteStorageService) GetSession(sessionID string) (*model.Session, err
 	if t, ok := parseDBTime(createdAt); ok {
 		session.CreatedAt = t
 	}
+	session.CacheHitRatePercent = promptCacheHitRatePercent(session.InputTokens, session.CacheReadTokens, session.CacheWriteTokens)
 
 	return &session, nil
 }
@@ -2991,6 +3084,8 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 			COALESCE(SUM(output_tokens), 0) as output_tokens,
 			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
 			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_creation_5m_tokens), 0) as cache_creation_5m_tokens,
+			COALESCE(SUM(cache_creation_1h_tokens), 0) as cache_creation_1h_tokens,
 			COUNT(*) as message_count,
 			COALESCE(model, 'unknown') as model
 		FROM (
@@ -3000,7 +3095,9 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 				MAX(input_tokens) as input_tokens,
 				MAX(output_tokens) as output_tokens,
 				MAX(cache_read_tokens) as cache_read_tokens,
-				MAX(cache_creation_tokens) as cache_creation_tokens
+				MAX(cache_creation_tokens) as cache_creation_tokens,
+				MAX(cache_creation_5m_tokens) as cache_creation_5m_tokens,
+				MAX(cache_creation_1h_tokens) as cache_creation_1h_tokens
 			FROM conversation_messages
 			WHERE conversation_id = ?
 				AND role IN ('user', 'assistant')
@@ -3021,6 +3118,7 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 	}
 
 	var totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens int64
+	var cacheCreation5mTokens, cacheCreation1hTokens int64
 	var messageCount int64
 
 	for rows.Next() {
@@ -3031,6 +3129,8 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 			&breakdown.OutputTokens,
 			&breakdown.CacheReadTokens,
 			&breakdown.CacheCreationTokens,
+			&breakdown.CacheCreation5mTokens,
+			&breakdown.CacheCreation1hTokens,
 			&breakdown.MessageCount,
 			&breakdown.Model,
 		); err != nil {
@@ -3044,6 +3144,8 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 		outputTokens += breakdown.OutputTokens
 		cacheReadTokens += breakdown.CacheReadTokens
 		cacheCreationTokens += breakdown.CacheCreationTokens
+		cacheCreation5mTokens += breakdown.CacheCreation5mTokens
+		cacheCreation1hTokens += breakdown.CacheCreation1hTokens
 		messageCount += breakdown.MessageCount
 	}
 
@@ -3053,13 +3155,15 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 	} else if len(summary.ByModel) == 0 {
 		// Single model with unknown
 		summary.ByModel["unknown"] = &model.TokenBreakdown{
-			Model:               "unknown",
-			TotalTokens:         0,
-			InputTokens:         0,
-			OutputTokens:        0,
-			CacheReadTokens:     0,
-			CacheCreationTokens: 0,
-			MessageCount:        0,
+			Model:                 "unknown",
+			TotalTokens:           0,
+			InputTokens:           0,
+			OutputTokens:          0,
+			CacheReadTokens:       0,
+			CacheCreationTokens:   0,
+			CacheCreation5mTokens: 0,
+			CacheCreation1hTokens: 0,
+			MessageCount:          0,
 		}
 	}
 
@@ -3068,10 +3172,13 @@ func (s *SQLiteStorageService) GetConversationTokenSummary(conversationID string
 	summary.OutputTokens = outputTokens
 	summary.CacheReadTokens = cacheReadTokens
 	summary.CacheCreationTokens = cacheCreationTokens
+	summary.CacheCreation5mTokens = cacheCreation5mTokens
+	summary.CacheCreation1hTokens = cacheCreation1hTokens
 	summary.MessageCount = messageCount
 	if messageCount > 0 {
 		summary.AvgTokensPerMessage = totalTokens / messageCount
 	}
+	summary.CacheHitRatePercent = promptCacheHitRatePercent(inputTokens, cacheReadTokens, cacheCreationTokens)
 
 	return summary, nil
 }
@@ -3090,14 +3197,32 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 
 	// Query project-level stats from message timestamps so the timestamp index can be used.
 	query := `
+		WITH dedup AS (
+			SELECT
+				conversation_id,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens,
+				MAX(cache_creation_5m_tokens) as cache_creation_5m_tokens,
+				MAX(cache_creation_1h_tokens) as cache_creation_1h_tokens
+			FROM conversation_messages
+			WHERE timestamp BETWEEN ? AND ?
+				AND role IN ('user', 'assistant')
+			GROUP BY conversation_id, COALESCE(request_id, uuid)
+		)
 		SELECT
 			c.project_name,
-			COUNT(DISTINCT cm.conversation_id) as conversation_count,
-			COALESCE(SUM(cm.input_tokens + cm.output_tokens + cm.cache_read_tokens + cm.cache_creation_tokens), 0) as total_tokens
-		FROM conversation_messages cm
-		JOIN conversations c ON cm.conversation_id = c.id
-		WHERE cm.timestamp BETWEEN ? AND ?
-			AND cm.role IN ('user', 'assistant')
+			COUNT(DISTINCT d.conversation_id) as conversation_count,
+			COALESCE(SUM(d.input_tokens + d.output_tokens + d.cache_read_tokens + d.cache_creation_tokens), 0) as total_tokens,
+			COALESCE(SUM(d.input_tokens), 0) as input_tokens,
+			COALESCE(SUM(d.output_tokens), 0) as output_tokens,
+			COALESCE(SUM(d.cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(d.cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(d.cache_creation_5m_tokens), 0) as cache_creation_5m_tokens,
+			COALESCE(SUM(d.cache_creation_1h_tokens), 0) as cache_creation_1h_tokens
+		FROM dedup d
+		JOIN conversations c ON d.conversation_id = c.id
 		GROUP BY c.project_name
 		ORDER BY total_tokens DESC
 		LIMIT 25
@@ -3107,21 +3232,89 @@ func (s *SQLiteStorageService) GetProjectTokenStats(startTime, endTime string) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to query project token stats: %w", err)
 	}
+	defer rows.Close()
 
 	var stats []*model.ProjectTokenStat
 	for rows.Next() {
-		var s model.ProjectTokenStat
-		if err := rows.Scan(&s.Name, &s.ConversationCount, &s.TotalTokens); err != nil {
+		var stat model.ProjectTokenStat
+		if err := rows.Scan(
+			&stat.Name,
+			&stat.ConversationCount,
+			&stat.TotalTokens,
+			&stat.InputTokens,
+			&stat.OutputTokens,
+			&stat.CacheReadTokens,
+			&stat.CacheCreationTokens,
+			&stat.CacheCreation5mTokens,
+			&stat.CacheCreation1hTokens,
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan project stat: %w", err)
 		}
-		stats = append(stats, &s)
+		stat.CacheHitRatePercent = promptCacheHitRatePercent(stat.InputTokens, stat.CacheReadTokens, stat.CacheCreationTokens)
+
+		topRows, err := s.db.QueryContext(ctx, `
+			WITH dedup AS (
+				SELECT
+					conversation_id,
+					MAX(input_tokens) as input_tokens,
+					MAX(output_tokens) as output_tokens,
+					MAX(cache_read_tokens) as cache_read_tokens,
+					MAX(cache_creation_tokens) as cache_creation_tokens
+				FROM conversation_messages
+				WHERE timestamp BETWEEN ? AND ?
+					AND role IN ('user', 'assistant')
+				GROUP BY conversation_id, COALESCE(request_id, uuid)
+			)
+			SELECT
+				c.id as conversation_id,
+				COALESCE(SUM(d.input_tokens + d.output_tokens + d.cache_read_tokens + d.cache_creation_tokens), 0) as total_tokens,
+				COALESCE(SUM(d.input_tokens), 0) as input_tokens,
+				COALESCE(SUM(d.output_tokens), 0) as output_tokens,
+				COALESCE(SUM(d.cache_read_tokens), 0) as cache_read_tokens,
+				COALESCE(SUM(d.cache_creation_tokens), 0) as cache_creation_tokens,
+				COUNT(*) as message_count
+			FROM dedup d
+			JOIN conversations c ON d.conversation_id = c.id
+			WHERE c.project_name = ?
+			GROUP BY c.id
+			ORDER BY total_tokens DESC
+			LIMIT 5
+		`, startTime, endTime, stat.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query top conversations for project %s: %w", stat.Name, err)
+		}
+
+		top := make([]model.ConversationTokenBreakdown, 0, 5)
+		for topRows.Next() {
+			var row model.ConversationTokenBreakdown
+			if err := topRows.Scan(
+				&row.ConversationID,
+				&row.TotalTokens,
+				&row.InputTokens,
+				&row.OutputTokens,
+				&row.CacheReadTokens,
+				&row.CacheCreationTokens,
+				&row.MessageCount,
+			); err != nil {
+				_ = topRows.Close()
+				return nil, fmt.Errorf("failed to scan top conversation row for project %s: %w", stat.Name, err)
+			}
+			row.CacheHitRatePercent = promptCacheHitRatePercent(row.InputTokens, row.CacheReadTokens, row.CacheCreationTokens)
+			top = append(top, row)
+		}
+		if err := topRows.Err(); err != nil {
+			_ = topRows.Close()
+			return nil, fmt.Errorf("failed iterating top conversation rows for project %s: %w", stat.Name, err)
+		}
+		if err := topRows.Close(); err != nil {
+			return nil, fmt.Errorf("failed closing top conversation rows for project %s: %w", stat.Name, err)
+		}
+		stat.TopConversations = top
+
+		stats = append(stats, &stat)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return nil, fmt.Errorf("failed iterating project token stats: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("failed closing project token stats rows: %w", err)
 	}
 
 	return stats, nil
@@ -3140,7 +3333,11 @@ func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*
 			COALESCE(deduped.message_count, 0) as message_count,
 			COALESCE(deduped.total_tokens, 0) as total_tokens,
 			COALESCE(deduped.input_tokens, 0) as input_tokens,
-			COALESCE(deduped.output_tokens, 0) as output_tokens
+			COALESCE(deduped.output_tokens, 0) as output_tokens,
+			COALESCE(deduped.cache_read_tokens, 0) as cache_read_tokens,
+			COALESCE(deduped.cache_creation_tokens, 0) as cache_creation_tokens,
+			COALESCE(deduped.cache_creation_5m_tokens, 0) as cache_creation_5m_tokens,
+			COALESCE(deduped.cache_creation_1h_tokens, 0) as cache_creation_1h_tokens
 		FROM conversations c
 		LEFT JOIN (
 			SELECT
@@ -3148,7 +3345,11 @@ func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*
 				COUNT(*) as message_count,
 				SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) as total_tokens,
 				SUM(input_tokens) as input_tokens,
-				SUM(output_tokens) as output_tokens
+				SUM(output_tokens) as output_tokens,
+				SUM(cache_read_tokens) as cache_read_tokens,
+				SUM(cache_creation_tokens) as cache_creation_tokens,
+				SUM(cache_creation_5m_tokens) as cache_creation_5m_tokens,
+				SUM(cache_creation_1h_tokens) as cache_creation_1h_tokens
 			FROM (
 				SELECT
 					COALESCE(request_id, uuid) as dedup_key,
@@ -3156,10 +3357,12 @@ func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*
 					MAX(input_tokens) as input_tokens,
 					MAX(output_tokens) as output_tokens,
 					MAX(cache_read_tokens) as cache_read_tokens,
-					MAX(cache_creation_tokens) as cache_creation_tokens
+					MAX(cache_creation_tokens) as cache_creation_tokens,
+					MAX(cache_creation_5m_tokens) as cache_creation_5m_tokens,
+					MAX(cache_creation_1h_tokens) as cache_creation_1h_tokens
 				FROM conversation_messages
 				WHERE role IN ('user', 'assistant')
-				GROUP BY dedup_key
+				GROUP BY conversation_id, dedup_key
 			)
 			GROUP BY conversation_id
 		) deduped ON c.id = deduped.conversation_id
@@ -3194,6 +3397,10 @@ func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*
 			&conv.TotalTokens,
 			&conv.InputTokens,
 			&conv.OutputTokens,
+			&conv.CacheReadTokens,
+			&conv.CacheCreationTokens,
+			&conv.CacheCreation5mTokens,
+			&conv.CacheCreation1hTokens,
 		); err != nil {
 			continue
 		}
@@ -3208,6 +3415,7 @@ func (s *SQLiteStorageService) GetIndexedConversationsWithTokens(limit int) ([]*
 				conv.EndTime = t
 			}
 		}
+		conv.CacheHitRatePercent = promptCacheHitRatePercent(conv.InputTokens, conv.CacheReadTokens, conv.CacheCreationTokens)
 
 		conversations = append(conversations, &conv)
 	}

@@ -31,6 +31,17 @@ interface ArtifactSelection {
   payload: unknown
 }
 
+function formatTokens(value: number | undefined): string {
+  const numeric = value ?? 0
+  if (numeric >= 1_000_000) return `${(numeric / 1_000_000).toFixed(1)}M`
+  if (numeric >= 1_000) return `${(numeric / 1_000).toFixed(1)}K`
+  return String(numeric)
+}
+
+function formatPercent(value: number | undefined): string {
+  return `${(value ?? 0).toFixed(1)}%`
+}
+
 export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -48,7 +59,7 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
   const sessionsFreshness = useListFreshness(sessionList?.sessions, {
     scopeKey: `sessions-list-${query}`,
     getId: (item) => item.id,
-    getHash: (item) => [item.message_count, item.todo_count, item.conversation_count, item.agent_count, item.project_path || ''].join('|'),
+    getHash: (item) => [item.message_count, item.todo_count, item.conversation_count, item.agent_count, item.project_path || '', item.total_tokens || 0, item.cache_hit_rate_percent || 0].join('|'),
   })
   const messagesFreshness = useListFreshness(sessionMessages?.messages, {
     scopeKey: `session-messages-${selectedSessionId || 'none'}`,
@@ -225,6 +236,8 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                         <Group mt="xs" gap={6}>
                           <Badge size="xs" variant="outline">msg {session.message_count}</Badge>
                           <Badge size="xs" variant="outline">todo {session.todo_count}</Badge>
+                          <Badge size="xs" variant="light">tok {formatTokens(session.total_tokens)}</Badge>
+                          <Badge size="xs" variant="light">hit {formatPercent(session.cache_hit_rate_percent)}</Badge>
                         </Group>
                       </Card>
                     </MotionListItem>
@@ -245,6 +258,14 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
               <Text size="sm" c="dimmed">Select a session.</Text>
             ) : (
               <Tabs value={tab} onChange={(value) => setTab(value || 'messages')}>
+                <Group mb="sm" gap="xs">
+                  <Badge variant="light">Total {formatTokens(sessionDetail.token_summary.totalTokens)}</Badge>
+                  <Badge variant="outline">Input {formatTokens(sessionDetail.token_summary.inputTokens)}</Badge>
+                  <Badge variant="outline">Output {formatTokens(sessionDetail.token_summary.outputTokens)}</Badge>
+                  <Badge variant="outline">Read {formatTokens(sessionDetail.token_summary.cacheReadTokens)}</Badge>
+                  <Badge variant="outline">Write {formatTokens(sessionDetail.token_summary.cacheCreationTokens)}</Badge>
+                  <Badge variant="light">Hit {formatPercent(sessionDetail.token_summary.cacheHitRatePercent)}</Badge>
+                </Group>
                 <FreshnessBadges freshness={activeTabFreshness} label="Active tab" />
                 <Tabs.List>
                   <Tabs.Tab value="messages">Messages ({sessionMessages?.messages.length || 0})</Tabs.Tab>
@@ -263,6 +284,10 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                         { key: 'uuid', label: 'UUID' },
                         { key: 'role', label: 'Role' },
                         { key: 'model', label: 'Model' },
+                        { key: 'inputTokens', label: 'Input' },
+                        { key: 'outputTokens', label: 'Output' },
+                        { key: 'cacheReadTokens', label: 'Read' },
+                        { key: 'cacheCreationTokens', label: 'Write' },
                         { key: 'timestamp', label: 'Timestamp' },
                       ],
                       'message',
@@ -318,12 +343,16 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                       id: item.id,
                       projectName: item.projectName,
                       messageCount: item.messageCount,
+                      total_tokens: formatTokens(item.total_tokens),
+                      cache_hit_rate_percent: formatPercent(item.cache_hit_rate_percent),
                       lastActivity: item.lastActivity,
                     })) as unknown as Array<Record<string, unknown>>,
                     [
                       { key: 'id', label: 'Conversation' },
                       { key: 'projectName', label: 'Project' },
                       { key: 'messageCount', label: 'Messages' },
+                      { key: 'total_tokens', label: 'Tokens' },
+                      { key: 'cache_hit_rate_percent', label: 'Hit %' },
                       { key: 'lastActivity', label: 'Last Activity' },
                     ],
                     'conversation',

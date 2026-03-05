@@ -98,6 +98,14 @@ func normalizeRange(start, end string) (string, string) {
 	return now.AddDate(0, 0, -7).Format(time.RFC3339), now.Format(time.RFC3339)
 }
 
+func promptCacheHitRatePercent(inputTokens, cacheReadTokens, cacheCreationTokens int64) float64 {
+	totalInput := inputTokens + cacheReadTokens + cacheCreationTokens
+	if totalInput <= 0 {
+		return 0
+	}
+	return (float64(cacheReadTokens) / float64(totalInput)) * 100
+}
+
 func (h *DataHandler) GetOverviewV3(w http.ResponseWriter, r *http.Request) {
 	start, end := normalizeRange(r.URL.Query().Get("start"), r.URL.Query().Get("end"))
 	overview, err := h.buildOverviewV3(start, end)
@@ -287,7 +295,7 @@ func (h *DataHandler) GetSessionsV3(w http.ResponseWriter, r *http.Request) {
 	where := ""
 	args := []interface{}{}
 	if q != "" {
-		where = "WHERE id LIKE ? OR project_path LIKE ?"
+		where = "WHERE sessions.id LIKE ? OR sessions.project_path LIKE ?"
 		like := "%" + q + "%"
 		args = append(args, like, like)
 	}
@@ -300,10 +308,47 @@ func (h *DataHandler) GetSessionsV3(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, project_path, started_at, ended_at, conversation_count, message_count, agent_count, todo_count, created_at
+		SELECT
+			sessions.id,
+			sessions.project_path,
+			sessions.started_at,
+			sessions.ended_at,
+			sessions.conversation_count,
+			sessions.message_count,
+			sessions.agent_count,
+			sessions.todo_count,
+			sessions.created_at,
+			COALESCE(token_agg.total_tokens, 0) as total_tokens,
+			COALESCE(token_agg.input_tokens, 0) as input_tokens,
+			COALESCE(token_agg.output_tokens, 0) as output_tokens,
+			COALESCE(token_agg.cache_read_tokens, 0) as cache_read_tokens,
+			COALESCE(token_agg.cache_creation_tokens, 0) as cache_creation_tokens
 		FROM sessions
+		LEFT JOIN (
+			SELECT
+				session_key,
+				SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) as total_tokens,
+				SUM(input_tokens) as input_tokens,
+				SUM(output_tokens) as output_tokens,
+				SUM(cache_read_tokens) as cache_read_tokens,
+				SUM(cache_creation_tokens) as cache_creation_tokens
+			FROM (
+				SELECT
+					COALESCE(NULLIF(session_id, ''), NULLIF(agent_id, '')) as session_key,
+					COALESCE(request_id, uuid) as dedup_key,
+					MAX(input_tokens) as input_tokens,
+					MAX(output_tokens) as output_tokens,
+					MAX(cache_read_tokens) as cache_read_tokens,
+					MAX(cache_creation_tokens) as cache_creation_tokens
+				FROM conversation_messages
+				WHERE role IN ('user', 'assistant')
+				  AND COALESCE(NULLIF(session_id, ''), NULLIF(agent_id, '')) IS NOT NULL
+				GROUP BY session_key, dedup_key
+			)
+			GROUP BY session_key
+		) token_agg ON token_agg.session_key = sessions.id
 		%s
-		ORDER BY COALESCE(ended_at, started_at, created_at) DESC
+		ORDER BY COALESCE(sessions.ended_at, sessions.started_at, sessions.created_at) DESC
 		LIMIT ? OFFSET ?
 	`, where)
 	args = append(args, limit, offset)
@@ -318,8 +363,23 @@ func (h *DataHandler) GetSessionsV3(w http.ResponseWriter, r *http.Request) {
 	sessions := make([]*model.Session, 0, limit)
 	for rows.Next() {
 		var s model.Session
-		var startedAt, endedAt sql.NullString
-		if err := rows.Scan(&s.ID, &s.ProjectPath, &startedAt, &endedAt, &s.ConversationCount, &s.MessageCount, &s.AgentCount, &s.TodoCount, &s.CreatedAt); err != nil {
+		var startedAt, endedAt, createdAt sql.NullString
+		if err := rows.Scan(
+			&s.ID,
+			&s.ProjectPath,
+			&startedAt,
+			&endedAt,
+			&s.ConversationCount,
+			&s.MessageCount,
+			&s.AgentCount,
+			&s.TodoCount,
+			&createdAt,
+			&s.TotalTokens,
+			&s.InputTokens,
+			&s.OutputTokens,
+			&s.CacheReadTokens,
+			&s.CacheWriteTokens,
+		); err != nil {
 			continue
 		}
 		if startedAt.Valid {
@@ -332,6 +392,12 @@ func (h *DataHandler) GetSessionsV3(w http.ResponseWriter, r *http.Request) {
 				s.EndedAt = &parsed
 			}
 		}
+		if createdAt.Valid {
+			if parsed, err := time.Parse(time.RFC3339, createdAt.String); err == nil {
+				s.CreatedAt = parsed
+			}
+		}
+		s.CacheHitRatePercent = promptCacheHitRatePercent(s.InputTokens, s.CacheReadTokens, s.CacheWriteTokens)
 		sessions = append(sessions, &s)
 	}
 
@@ -381,13 +447,102 @@ func (h *DataHandler) buildSessionDetailV3(sessionID string) (map[string]interfa
 		todos = []*model.Todo{}
 	}
 
+	sessionTokenSummary, err := h.sessionTokenSummaryV3(sessionID)
+	if err != nil {
+		sessionTokenSummary = &model.ConversationTokenSummary{
+			ByModel: make(map[string]*model.TokenBreakdown),
+		}
+	}
+
+	conversationPayload := make([]map[string]interface{}, 0, len(conversations))
+	for _, conv := range conversations {
+		tokenSummary, err := h.storageService.GetConversationTokenSummary(conv.ID)
+		if err != nil || tokenSummary == nil {
+			tokenSummary = &model.ConversationTokenSummary{}
+		}
+		conversationPayload = append(conversationPayload, map[string]interface{}{
+			"id":                       conv.ID,
+			"projectName":              conv.ProjectName,
+			"projectPath":              conv.ProjectPath,
+			"messageCount":             conv.MessageCount,
+			"startTime":                conv.StartTime,
+			"lastActivity":             conv.EndTime,
+			"total_tokens":             tokenSummary.TotalTokens,
+			"input_tokens":             tokenSummary.InputTokens,
+			"output_tokens":            tokenSummary.OutputTokens,
+			"cache_read_tokens":        tokenSummary.CacheReadTokens,
+			"cache_creation_tokens":    tokenSummary.CacheCreationTokens,
+			"cache_creation_5m_tokens": tokenSummary.CacheCreation5mTokens,
+			"cache_creation_1h_tokens": tokenSummary.CacheCreation1hTokens,
+			"cache_hit_rate_percent":   tokenSummary.CacheHitRatePercent,
+		})
+	}
+
 	return map[string]interface{}{
 		"session":       session,
-		"conversations": conversations,
+		"token_summary": sessionTokenSummary,
+		"conversations": conversationPayload,
 		"files":         files,
 		"plans":         plans,
 		"todos":         todos,
 	}, nil
+}
+
+func (h *DataHandler) sessionTokenSummaryV3(sessionID string) (*model.ConversationTokenSummary, error) {
+	db, err := h.sqliteDB()
+	if err != nil {
+		return nil, err
+	}
+
+	row := db.QueryRow(`
+		SELECT
+			COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as total_tokens,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(output_tokens), 0) as output_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_creation_5m_tokens), 0) as cache_creation_5m_tokens,
+			COALESCE(SUM(cache_creation_1h_tokens), 0) as cache_creation_1h_tokens,
+			COUNT(*) as message_count
+		FROM (
+			SELECT
+				conversation_id,
+				COALESCE(request_id, uuid) as dedup_key,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens,
+				MAX(cache_creation_5m_tokens) as cache_creation_5m_tokens,
+				MAX(cache_creation_1h_tokens) as cache_creation_1h_tokens
+			FROM conversation_messages
+			WHERE (session_id = ? OR agent_id = ?)
+				AND role IN ('user', 'assistant')
+			GROUP BY conversation_id, dedup_key
+		)
+	`, sessionID, sessionID)
+
+	summary := &model.ConversationTokenSummary{
+		ByModel: make(map[string]*model.TokenBreakdown),
+	}
+	if err := row.Scan(
+		&summary.TotalTokens,
+		&summary.InputTokens,
+		&summary.OutputTokens,
+		&summary.CacheReadTokens,
+		&summary.CacheCreationTokens,
+		&summary.CacheCreation5mTokens,
+		&summary.CacheCreation1hTokens,
+		&summary.MessageCount,
+	); err != nil {
+		return nil, err
+	}
+
+	if summary.MessageCount > 0 {
+		summary.AvgTokensPerMessage = summary.TotalTokens / summary.MessageCount
+	}
+	summary.CacheHitRatePercent = promptCacheHitRatePercent(summary.InputTokens, summary.CacheReadTokens, summary.CacheCreationTokens)
+
+	return summary, nil
 }
 
 func (h *DataHandler) GetSessionV3(w http.ResponseWriter, r *http.Request) {
@@ -448,6 +603,7 @@ func (h *DataHandler) GetSessionMessagesV3(w http.ResponseWriter, r *http.Reques
 	rows, err := db.Query(`
 		SELECT uuid, conversation_id, parent_uuid, type, role, timestamp, cwd, git_branch, session_id, agent_id,
 			is_sidechain, request_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+			cache_creation_5m_tokens, cache_creation_1h_tokens,
 			content_json
 		FROM conversation_messages
 		WHERE session_id = ? OR agent_id = ?
@@ -485,6 +641,8 @@ func (h *DataHandler) GetSessionMessagesV3(w http.ResponseWriter, r *http.Reques
 			&m.OutputTokens,
 			&m.CacheReadTokens,
 			&m.CacheCreationTokens,
+			&m.CacheCreation5mTokens,
+			&m.CacheCreation1hTokens,
 			&content,
 		); err != nil {
 			continue
@@ -554,10 +712,16 @@ func (h *DataHandler) GetConversationV3(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	tokenSummary, err := h.storageService.GetConversationTokenSummary(conversationID)
+	if err != nil || tokenSummary == nil {
+		tokenSummary = &model.ConversationTokenSummary{ByModel: map[string]*model.TokenBreakdown{}}
+	}
+
 	writeJSONResponse(w, map[string]interface{}{
-		"conversation": conversation,
-		"file_path":    filePath,
-		"project_path": projectPath,
+		"conversation":  conversation,
+		"file_path":     filePath,
+		"project_path":  projectPath,
+		"token_summary": tokenSummary,
 	})
 }
 
@@ -614,37 +778,160 @@ func (h *DataHandler) GetPlanV3(w http.ResponseWriter, r *http.Request) {
 // V3 Token Economics
 // ============================================================================
 
+func (h *DataHandler) tokenUsageSummaryV3(start, end string) (model.V3TokenUsageBreakdown, error) {
+	db, err := h.sqliteDB()
+	if err != nil {
+		return model.V3TokenUsageBreakdown{}, err
+	}
+
+	row := db.QueryRow(`
+		SELECT
+			COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as total_tokens,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(output_tokens), 0) as output_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_creation_5m_tokens), 0) as cache_creation_5m_tokens,
+			COALESCE(SUM(cache_creation_1h_tokens), 0) as cache_creation_1h_tokens
+		FROM (
+			SELECT
+				conversation_id,
+				COALESCE(request_id, uuid) as dedup_key,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens,
+				MAX(cache_creation_5m_tokens) as cache_creation_5m_tokens,
+				MAX(cache_creation_1h_tokens) as cache_creation_1h_tokens
+			FROM conversation_messages
+			WHERE timestamp BETWEEN ? AND ?
+				AND role IN ('user', 'assistant')
+			GROUP BY conversation_id, dedup_key
+		)
+	`, start, end)
+
+	var usage model.V3TokenUsageBreakdown
+	if err := row.Scan(
+		&usage.TotalTokens,
+		&usage.InputTokens,
+		&usage.OutputTokens,
+		&usage.CacheReadTokens,
+		&usage.CacheCreationTokens,
+		&usage.CacheCreation5mTokens,
+		&usage.CacheCreation1hTokens,
+	); err != nil {
+		return model.V3TokenUsageBreakdown{}, err
+	}
+	return usage, nil
+}
+
+func (h *DataHandler) tokenTimeseriesV3(start, end, bucket string) ([]*model.V3TokenTimeseriesPoint, error) {
+	db, err := h.sqliteDB()
+	if err != nil {
+		return nil, err
+	}
+
+	bucketExpr := "strftime('%Y-%m-%d', ts)"
+	if bucket == "hour" {
+		bucketExpr = "strftime('%Y-%m-%dT%H:00:00Z', ts)"
+	}
+
+	query := fmt.Sprintf(`
+		WITH dedup AS (
+			SELECT
+				conversation_id,
+				COALESCE(request_id, uuid) as dedup_key,
+				MAX(timestamp) as ts,
+				MAX(input_tokens) as input_tokens,
+				MAX(output_tokens) as output_tokens,
+				MAX(cache_read_tokens) as cache_read_tokens,
+				MAX(cache_creation_tokens) as cache_creation_tokens
+			FROM conversation_messages
+			WHERE timestamp BETWEEN ? AND ?
+				AND role IN ('user', 'assistant')
+			GROUP BY conversation_id, dedup_key
+		)
+		SELECT
+			%s as bucket,
+			COUNT(*) as requests,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(output_tokens), 0) as output_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens
+		FROM dedup
+		GROUP BY bucket
+		ORDER BY bucket ASC
+	`, bucketExpr)
+
+	rows, err := db.Query(query, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	points := make([]*model.V3TokenTimeseriesPoint, 0)
+	for rows.Next() {
+		point := &model.V3TokenTimeseriesPoint{}
+		if err := rows.Scan(
+			&point.Bucket,
+			&point.Requests,
+			&point.InputTokens,
+			&point.OutputTokens,
+			&point.CacheReadTokens,
+			&point.CacheCreationTokens,
+		); err != nil {
+			return nil, err
+		}
+		point.Tokens = point.InputTokens + point.OutputTokens + point.CacheReadTokens + point.CacheCreationTokens
+		point.CacheHitRatePercent = promptCacheHitRatePercent(point.InputTokens, point.CacheReadTokens, point.CacheCreationTokens)
+		points = append(points, point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return points, nil
+}
+
 func (h *DataHandler) GetTokenEconomicsSummaryV3(w http.ResponseWriter, r *http.Request) {
 	start, end := normalizeRange(r.URL.Query().Get("start"), r.URL.Query().Get("end"))
-	stats, err := h.storageService.GetStats(start, end)
+	usage, err := h.tokenUsageSummaryV3(start, end)
 	if err != nil {
 		writeErrorResponse(w, "Failed to get token summary", http.StatusInternalServerError)
 		return
 	}
 
-	if len(stats.DailyStats) == 0 {
-		writeJSONResponse(w, &model.V3TokenSummaryResponse{GeneratedAt: time.Now().UTC().Format(time.RFC3339)})
+	dailyPoints, err := h.tokenTimeseriesV3(start, end, "day")
+	if err != nil {
+		writeErrorResponse(w, "Failed to get token summary", http.StatusInternalServerError)
 		return
 	}
 
-	total := int64(0)
-	peak := stats.DailyStats[0]
-	for _, day := range stats.DailyStats {
-		total += day.Tokens
+	if len(dailyPoints) == 0 {
+		writeJSONResponse(w, &model.V3TokenSummaryResponse{
+			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			Usage:       usage,
+			PromptCache: model.V3PromptCacheMetrics{UncachedInputTokens: usage.InputTokens},
+		})
+		return
+	}
+
+	total := usage.TotalTokens
+	peak := dailyPoints[0]
+	for _, day := range dailyPoints {
 		if day.Tokens > peak.Tokens {
 			peak = day
 		}
 	}
-	burn := total / int64(len(stats.DailyStats))
+	burn := total / int64(len(dailyPoints))
 
 	trendPct := int64(0)
-	if len(stats.DailyStats) >= 14 {
+	if len(dailyPoints) >= 14 {
 		recent := int64(0)
 		previous := int64(0)
-		for _, day := range stats.DailyStats[len(stats.DailyStats)-7:] {
+		for _, day := range dailyPoints[len(dailyPoints)-7:] {
 			recent += day.Tokens
 		}
-		for _, day := range stats.DailyStats[len(stats.DailyStats)-14 : len(stats.DailyStats)-7] {
+		for _, day := range dailyPoints[len(dailyPoints)-14 : len(dailyPoints)-7] {
 			previous += day.Tokens
 		}
 		if previous > 0 {
@@ -652,13 +939,25 @@ func (h *DataHandler) GetTokenEconomicsSummaryV3(w http.ResponseWriter, r *http.
 		}
 	}
 
+	totalInputTokens := usage.InputTokens + usage.CacheReadTokens + usage.CacheCreationTokens
+	cacheWriteRatePercent := 0.0
+	if totalInputTokens > 0 {
+		cacheWriteRatePercent = (float64(usage.CacheCreationTokens) / float64(totalInputTokens)) * 100
+	}
+
 	writeJSONResponse(w, &model.V3TokenSummaryResponse{
 		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
 		TotalTokens:    total,
 		BurnRatePerDay: burn,
 		PeakDayTokens:  peak.Tokens,
-		PeakDayDate:    peak.Date,
+		PeakDayDate:    peak.Bucket,
 		TrendPercent:   trendPct,
+		Usage:          usage,
+		PromptCache: model.V3PromptCacheMetrics{
+			CacheHitRatePercent:   promptCacheHitRatePercent(usage.InputTokens, usage.CacheReadTokens, usage.CacheCreationTokens),
+			CacheWriteRatePercent: cacheWriteRatePercent,
+			UncachedInputTokens:   usage.InputTokens,
+		},
 	})
 }
 
@@ -669,29 +968,13 @@ func (h *DataHandler) GetTokenEconomicsTimeseriesV3(w http.ResponseWriter, r *ht
 		bucket = "day"
 	}
 
-	resp := &model.V3TokenTimeseriesResponse{Bucket: bucket, Points: []*model.V3TokenTimeseriesPoint{}}
-	if bucket == "hour" {
-		hourly, err := h.storageService.GetHourlyStats(start, end)
-		if err != nil {
-			writeErrorResponse(w, "Failed to get hourly token series", http.StatusInternalServerError)
-			return
-		}
-		for _, point := range hourly.HourlyStats {
-			resp.Points = append(resp.Points, &model.V3TokenTimeseriesPoint{Bucket: strconv.Itoa(point.Hour), Tokens: point.Tokens, Requests: point.Requests})
-		}
-		writeJSONResponse(w, resp)
+	points, err := h.tokenTimeseriesV3(start, end, bucket)
+	if err != nil {
+		writeErrorResponse(w, "Failed to get token series", http.StatusInternalServerError)
 		return
 	}
 
-	weekly, err := h.storageService.GetStats(start, end)
-	if err != nil {
-		writeErrorResponse(w, "Failed to get daily token series", http.StatusInternalServerError)
-		return
-	}
-	for _, day := range weekly.DailyStats {
-		resp.Points = append(resp.Points, &model.V3TokenTimeseriesPoint{Bucket: day.Date, Tokens: day.Tokens, Requests: day.Requests})
-	}
-	writeJSONResponse(w, resp)
+	writeJSONResponse(w, &model.V3TokenTimeseriesResponse{Bucket: bucket, Points: points})
 }
 
 func (h *DataHandler) GetTokenEconomicsProjectsV3(w http.ResponseWriter, r *http.Request) {

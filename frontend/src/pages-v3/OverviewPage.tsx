@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3Overview } from '@/lib/api-v3'
 import { useListFreshness } from '@/lib/live/useListFreshness'
-import { MotionCard, MotionSection } from '@/lib/motion/primitives'
+import { MotionBurst, MotionCard, MotionPop, MotionSection, MotionText } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 export function OverviewPage() {
@@ -29,13 +29,13 @@ export function OverviewPage() {
       <MotionSection variant="spiral">
         <Group justify="space-between">
         <div>
-          <Title order={2}>Overview</Title>
+          <Title order={2}><MotionText text="Overview" delay={0.1} /></Title>
           <Text c="dimmed">Compact operational summary with direct actions ({preset}).</Text>
           <FreshnessBadges freshness={overviewFreshness} label="Overview freshness" />
         </div>
         <Group>
-          <Button variant="light" onClick={() => navigate({ to: '/mission-control' })}>Mission Control</Button>
-          <Button onClick={() => navigate({ to: '/sessions' })}>Open Sessions</Button>
+          <MotionPop delay={0.3} index={0}><Button variant="light" onClick={() => navigate({ to: '/mission-control' })}>Mission Control</Button></MotionPop>
+          <MotionPop delay={0.3} index={1}><Button onClick={() => navigate({ to: '/sessions' })}>Open Sessions</Button></MotionPop>
         </Group>
         </Group>
       </MotionSection>
@@ -49,15 +49,17 @@ export function OverviewPage() {
           { label: 'Avg Tokens/Session', value: kpis?.avg_tokens_per_session ?? 0 },
         ].map((item, index) => (
           <Grid.Col key={item.label} span={{ base: 12, sm: 6, lg: 4 }}>
+            <MotionBurst delay={index * 0.07}>
             <MotionCard
               index={index}
-              flavor={index % 4 === 0 ? 'orbit' : index % 4 === 1 ? 'flip' : index % 4 === 2 ? 'tilt' : 'pulse'}
+              flavor={(['vortex', 'slam', 'elastic', 'ricochet', 'pulse'] as const)[index % 5]}
             >
               <Card withBorder className={overviewFreshness.getItemClassName('overview')}>
                 <Text size="sm" c="dimmed">{item.label}</Text>
                 <Title order={3}>{isLoading ? '--' : item.value.toLocaleString()}</Title>
               </Card>
             </MotionCard>
+            </MotionBurst>
           </Grid.Col>
         ))}
       </Grid>

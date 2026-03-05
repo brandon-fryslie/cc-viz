@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3MissionActivity, useV3MissionControl } from '@/lib/api-v3'
 import { useListFreshness } from '@/lib/live/useListFreshness'
-import { MotionCard, MotionListItem, MotionSection } from '@/lib/motion/primitives'
+import { MotionListItem, MotionPingPong, MotionSection } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 export function MissionControlPage() {
@@ -14,7 +14,7 @@ export function MissionControlPage() {
   const hotSessionFreshness = useListFreshness(data?.hot_sessions, {
     scopeKey: 'mission-control-hot-sessions',
     getId: (item) => item.id,
-    getHash: (item) => [item.message_count, item.todo_count, item.conversation_count, item.agent_count].join('|'),
+    getHash: (item) => [item.message_count, item.todo_count, item.conversation_count, item.agent_count, item.total_tokens || 0, item.cache_hit_rate_percent || 0].join('|'),
   })
   const activityFreshness = useListFreshness(activityData?.events, {
     scopeKey: 'mission-control-activity',
@@ -29,6 +29,9 @@ export function MissionControlPage() {
     removedCount: hotSessionFreshness.removedCount + activityFreshness.removedCount,
     getItemClassName: () => '',
   }
+
+  const formatTokens = (value: number | undefined) => (value ?? 0).toLocaleString()
+  const formatPercent = (value: number | undefined) => `${(value ?? 0).toFixed(1)}%`
 
   return (
     <Stack>
@@ -48,23 +51,23 @@ export function MissionControlPage() {
 
       <Grid>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <MotionCard flavor="orbit" index={0}>
+          <MotionPingPong index={0} delay={0}>
             <Card withBorder>
               <Text c="dimmed" size="sm">Active Sessions</Text>
               <Title order={3}>{isLoading ? '--' : (data?.kpis.active_sessions ?? 0).toLocaleString()}</Title>
             </Card>
-          </MotionCard>
+          </MotionPingPong>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <MotionCard flavor="flip" index={1}>
+          <MotionPingPong index={1} delay={0.08}>
             <Card withBorder>
               <Text c="dimmed" size="sm">Window Tokens</Text>
               <Title order={3}>{isLoading ? '--' : (data?.kpis.total_tokens_window ?? 0).toLocaleString()}</Title>
             </Card>
-          </MotionCard>
+          </MotionPingPong>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <MotionCard flavor="pulse" index={2}>
+          <MotionPingPong index={2} delay={0.16}>
             <Card withBorder>
               <Text c="dimmed" size="sm">Health</Text>
               <Group mt="xs">
@@ -74,7 +77,7 @@ export function MissionControlPage() {
                 <Badge variant="outline">Lag: {(data?.health.indexer_lag_seconds ?? 0)}s</Badge>
               </Group>
             </Card>
-          </MotionCard>
+          </MotionPingPong>
         </Grid.Col>
       </Grid>
 
@@ -94,6 +97,8 @@ export function MissionControlPage() {
                       <Table.Th>Project</Table.Th>
                       <Table.Th>Messages</Table.Th>
                       <Table.Th>Todos</Table.Th>
+                      <Table.Th>Tokens</Table.Th>
+                      <Table.Th>Cache Hit</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -108,6 +113,8 @@ export function MissionControlPage() {
                         <Table.Td>{session.project_path || 'N/A'}</Table.Td>
                         <Table.Td>{session.message_count}</Table.Td>
                         <Table.Td>{session.todo_count}</Table.Td>
+                        <Table.Td>{formatTokens(session.total_tokens)}</Table.Td>
+                        <Table.Td>{formatPercent(session.cache_hit_rate_percent)}</Table.Td>
                       </Table.Tr>
                     ))}
                   </Table.Tbody>

@@ -49,20 +49,26 @@ type ConversationMessage struct {
 
 // MessageContent represents the parsed message field
 type MessageContent struct {
-	Role        string          `json:"role,omitempty"`
-	Content     json.RawMessage `json:"content,omitempty"`
-	Model       string          `json:"model,omitempty"`
-	ID          string          `json:"id,omitempty"`
-	StopReason  string          `json:"stop_reason,omitempty"`
-	Usage       *MessageUsage   `json:"usage,omitempty"`
+	Role       string          `json:"role,omitempty"`
+	Content    json.RawMessage `json:"content,omitempty"`
+	Model      string          `json:"model,omitempty"`
+	ID         string          `json:"id,omitempty"`
+	StopReason string          `json:"stop_reason,omitempty"`
+	Usage      *MessageUsage   `json:"usage,omitempty"`
 }
 
 // MessageUsage represents token usage from a message
 type MessageUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	InputTokens              int                        `json:"input_tokens"`
+	OutputTokens             int                        `json:"output_tokens"`
+	CacheReadInputTokens     int                        `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int                        `json:"cache_creation_input_tokens"`
+	CacheCreation            *MessageCacheCreationUsage `json:"cache_creation,omitempty"`
+}
+
+type MessageCacheCreationUsage struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
 }
 
 // Conversation represents a complete conversation session

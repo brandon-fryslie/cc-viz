@@ -450,24 +450,26 @@ type IndexedConversation struct {
 
 // DBConversationMessage represents a message stored in the database
 type DBConversationMessage struct {
-	UUID                string          `json:"uuid"`
-	ConversationID      string          `json:"conversationId"`
-	ParentUUID          *string         `json:"parentUuid,omitempty"`
-	Type                string          `json:"type"`
-	Role                string          `json:"role,omitempty"`
-	Timestamp           time.Time       `json:"timestamp"`
-	CWD                 string          `json:"cwd,omitempty"`
-	GitBranch           string          `json:"gitBranch,omitempty"`
-	SessionID           string          `json:"sessionId,omitempty"`
-	AgentID             string          `json:"agentId,omitempty"`
-	IsSidechain         bool            `json:"isSidechain"`
-	RequestID           string          `json:"requestId,omitempty"`
-	Model               string          `json:"model,omitempty"`
-	InputTokens         int             `json:"inputTokens,omitempty"`
-	OutputTokens        int             `json:"outputTokens,omitempty"`
-	CacheReadTokens     int             `json:"cacheReadTokens,omitempty"`
-	CacheCreationTokens int             `json:"cacheCreationTokens,omitempty"`
-	Content             json.RawMessage `json:"content,omitempty"`
+	UUID                  string          `json:"uuid"`
+	ConversationID        string          `json:"conversationId"`
+	ParentUUID            *string         `json:"parentUuid,omitempty"`
+	Type                  string          `json:"type"`
+	Role                  string          `json:"role,omitempty"`
+	Timestamp             time.Time       `json:"timestamp"`
+	CWD                   string          `json:"cwd,omitempty"`
+	GitBranch             string          `json:"gitBranch,omitempty"`
+	SessionID             string          `json:"sessionId,omitempty"`
+	AgentID               string          `json:"agentId,omitempty"`
+	IsSidechain           bool            `json:"isSidechain"`
+	RequestID             string          `json:"requestId,omitempty"`
+	Model                 string          `json:"model,omitempty"`
+	InputTokens           int             `json:"inputTokens,omitempty"`
+	OutputTokens          int             `json:"outputTokens,omitempty"`
+	CacheReadTokens       int             `json:"cacheReadTokens,omitempty"`
+	CacheCreationTokens   int             `json:"cacheCreationTokens,omitempty"`
+	CacheCreation5mTokens int             `json:"cacheCreation5mTokens,omitempty"`
+	CacheCreation1hTokens int             `json:"cacheCreation1hTokens,omitempty"`
+	Content               json.RawMessage `json:"content,omitempty"`
 }
 
 // ConversationMessagesResponse wraps messages with pagination info
@@ -589,15 +591,21 @@ type SubagentGraphStats struct {
 
 // Session types - authoritative source for session tracking
 type Session struct {
-	ID                string     `json:"id"`
-	ProjectPath       string     `json:"project_path,omitempty"`
-	StartedAt         *time.Time `json:"started_at,omitempty"`
-	EndedAt           *time.Time `json:"ended_at,omitempty"`
-	ConversationCount int        `json:"conversation_count"`
-	MessageCount      int        `json:"message_count"`
-	AgentCount        int        `json:"agent_count"`
-	TodoCount         int        `json:"todo_count"`
-	CreatedAt         time.Time  `json:"created_at"`
+	ID                  string     `json:"id"`
+	ProjectPath         string     `json:"project_path,omitempty"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	EndedAt             *time.Time `json:"ended_at,omitempty"`
+	ConversationCount   int        `json:"conversation_count"`
+	MessageCount        int        `json:"message_count"`
+	AgentCount          int        `json:"agent_count"`
+	TodoCount           int        `json:"todo_count"`
+	TotalTokens         int64      `json:"total_tokens,omitempty"`
+	InputTokens         int64      `json:"input_tokens,omitempty"`
+	OutputTokens        int64      `json:"output_tokens,omitempty"`
+	CacheReadTokens     int64      `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens    int64      `json:"cache_creation_tokens,omitempty"`
+	CacheHitRatePercent float64    `json:"cache_hit_rate_percent,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 type SessionStats struct {
@@ -669,50 +677,88 @@ type Todo struct {
 
 // Token Economics Types - for real token data from conversation_messages table
 type ConversationTokenSummary struct {
-	TotalTokens         int64                      `json:"totalTokens"`
-	InputTokens         int64                      `json:"inputTokens"`
-	OutputTokens        int64                      `json:"outputTokens"`
-	CacheReadTokens     int64                      `json:"cacheReadTokens"`
-	CacheCreationTokens int64                      `json:"cacheCreationTokens"`
-	MessageCount        int64                      `json:"messageCount"`
-	AvgTokensPerMessage int64                      `json:"avgTokensPerMessage"`
-	ByModel             map[string]*TokenBreakdown `json:"byModel"`
+	TotalTokens           int64                      `json:"totalTokens"`
+	InputTokens           int64                      `json:"inputTokens"`
+	OutputTokens          int64                      `json:"outputTokens"`
+	CacheReadTokens       int64                      `json:"cacheReadTokens"`
+	CacheCreationTokens   int64                      `json:"cacheCreationTokens"`
+	CacheCreation5mTokens int64                      `json:"cacheCreation5mTokens"`
+	CacheCreation1hTokens int64                      `json:"cacheCreation1hTokens"`
+	MessageCount          int64                      `json:"messageCount"`
+	AvgTokensPerMessage   int64                      `json:"avgTokensPerMessage"`
+	CacheHitRatePercent   float64                    `json:"cacheHitRatePercent"`
+	ByModel               map[string]*TokenBreakdown `json:"byModel"`
 }
 
 type TokenBreakdown struct {
-	Model               string `json:"model"`
-	TotalTokens         int64  `json:"totalTokens"`
-	InputTokens         int64  `json:"inputTokens"`
-	OutputTokens        int64  `json:"outputTokens"`
-	CacheReadTokens     int64  `json:"cacheReadTokens"`
-	CacheCreationTokens int64  `json:"cacheCreationTokens"`
-	MessageCount        int64  `json:"messageCount"`
+	Model                 string `json:"model"`
+	TotalTokens           int64  `json:"totalTokens"`
+	InputTokens           int64  `json:"inputTokens"`
+	OutputTokens          int64  `json:"outputTokens"`
+	CacheReadTokens       int64  `json:"cacheReadTokens"`
+	CacheCreationTokens   int64  `json:"cacheCreationTokens"`
+	CacheCreation5mTokens int64  `json:"cacheCreation5mTokens"`
+	CacheCreation1hTokens int64  `json:"cacheCreation1hTokens"`
+	MessageCount          int64  `json:"messageCount"`
 }
 
 type ProjectTokenStat struct {
-	Name              string                       `json:"name"`
-	TotalTokens       int64                        `json:"totalTokens"`
-	ConversationCount int64                        `json:"conversationCount"`
-	TopConversations  []ConversationTokenBreakdown `json:"topConversations"`
+	Name                  string                       `json:"name"`
+	TotalTokens           int64                        `json:"totalTokens"`
+	InputTokens           int64                        `json:"inputTokens"`
+	OutputTokens          int64                        `json:"outputTokens"`
+	CacheReadTokens       int64                        `json:"cacheReadTokens"`
+	CacheCreationTokens   int64                        `json:"cacheCreationTokens"`
+	CacheCreation5mTokens int64                        `json:"cacheCreation5mTokens"`
+	CacheCreation1hTokens int64                        `json:"cacheCreation1hTokens"`
+	CacheHitRatePercent   float64                      `json:"cacheHitRatePercent"`
+	ConversationCount     int64                        `json:"conversationCount"`
+	TopConversations      []ConversationTokenBreakdown `json:"topConversations"`
 }
 
 type ConversationTokenBreakdown struct {
-	ConversationID string `json:"conversationId"`
-	TotalTokens    int64  `json:"totalTokens"`
-	MessageCount   int64  `json:"messageCount"`
+	ConversationID      string  `json:"conversationId"`
+	TotalTokens         int64   `json:"totalTokens"`
+	InputTokens         int64   `json:"inputTokens"`
+	OutputTokens        int64   `json:"outputTokens"`
+	CacheReadTokens     int64   `json:"cacheReadTokens"`
+	CacheCreationTokens int64   `json:"cacheCreationTokens"`
+	CacheHitRatePercent float64 `json:"cacheHitRatePercent"`
+	MessageCount        int64   `json:"messageCount"`
 }
 
 // IndexedConversationWithTokens extends IndexedConversation with token fields
 type IndexedConversationWithTokens struct {
-	ID           string    `json:"id"`
-	ProjectPath  string    `json:"projectPath"`
-	ProjectName  string    `json:"projectName"`
-	StartTime    time.Time `json:"startTime"`
-	EndTime      time.Time `json:"lastActivity"`
-	MessageCount int       `json:"messageCount"`
-	TotalTokens  int64     `json:"totalTokens"`
-	InputTokens  int64     `json:"inputTokens"`
-	OutputTokens int64     `json:"outputTokens"`
+	ID                    string    `json:"id"`
+	ProjectPath           string    `json:"projectPath"`
+	ProjectName           string    `json:"projectName"`
+	StartTime             time.Time `json:"startTime"`
+	EndTime               time.Time `json:"lastActivity"`
+	MessageCount          int       `json:"messageCount"`
+	TotalTokens           int64     `json:"totalTokens"`
+	InputTokens           int64     `json:"inputTokens"`
+	OutputTokens          int64     `json:"outputTokens"`
+	CacheReadTokens       int64     `json:"cacheReadTokens"`
+	CacheCreationTokens   int64     `json:"cacheCreationTokens"`
+	CacheCreation5mTokens int64     `json:"cacheCreation5mTokens"`
+	CacheCreation1hTokens int64     `json:"cacheCreation1hTokens"`
+	CacheHitRatePercent   float64   `json:"cacheHitRatePercent"`
+}
+
+type V3TokenUsageBreakdown struct {
+	TotalTokens           int64 `json:"total_tokens"`
+	InputTokens           int64 `json:"input_tokens"`
+	OutputTokens          int64 `json:"output_tokens"`
+	CacheReadTokens       int64 `json:"cache_read_input_tokens"`
+	CacheCreationTokens   int64 `json:"cache_creation_input_tokens"`
+	CacheCreation5mTokens int64 `json:"cache_creation_5m_input_tokens,omitempty"`
+	CacheCreation1hTokens int64 `json:"cache_creation_1h_input_tokens,omitempty"`
+}
+
+type V3PromptCacheMetrics struct {
+	CacheHitRatePercent   float64 `json:"cache_hit_rate_percent"`
+	CacheWriteRatePercent float64 `json:"cache_write_rate_percent"`
+	UncachedInputTokens   int64   `json:"uncached_input_tokens"`
 }
 
 // V3OverviewResponse is the compact landing payload for the rebuilt Mantine UI.
@@ -765,18 +811,25 @@ type V3SessionsResponse struct {
 }
 
 type V3TokenSummaryResponse struct {
-	GeneratedAt    string `json:"generated_at"`
-	TotalTokens    int64  `json:"total_tokens"`
-	BurnRatePerDay int64  `json:"burn_rate_per_day"`
-	PeakDayTokens  int64  `json:"peak_day_tokens"`
-	PeakDayDate    string `json:"peak_day_date,omitempty"`
-	TrendPercent   int64  `json:"trend_percent"`
+	GeneratedAt    string                `json:"generated_at"`
+	TotalTokens    int64                 `json:"total_tokens"`
+	BurnRatePerDay int64                 `json:"burn_rate_per_day"`
+	PeakDayTokens  int64                 `json:"peak_day_tokens"`
+	PeakDayDate    string                `json:"peak_day_date,omitempty"`
+	TrendPercent   int64                 `json:"trend_percent"`
+	Usage          V3TokenUsageBreakdown `json:"usage"`
+	PromptCache    V3PromptCacheMetrics  `json:"prompt_cache"`
 }
 
 type V3TokenTimeseriesPoint struct {
-	Bucket   string `json:"bucket"`
-	Tokens   int64  `json:"tokens"`
-	Requests int    `json:"requests"`
+	Bucket              string  `json:"bucket"`
+	Tokens              int64   `json:"tokens"`
+	Requests            int     `json:"requests"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_input_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_input_tokens"`
+	CacheHitRatePercent float64 `json:"cache_hit_rate_percent"`
 }
 
 type V3TokenTimeseriesResponse struct {

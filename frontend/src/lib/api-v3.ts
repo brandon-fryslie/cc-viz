@@ -69,6 +69,12 @@ export interface Session {
   message_count: number
   agent_count: number
   todo_count: number
+  total_tokens?: number
+  input_tokens?: number
+  output_tokens?: number
+  cache_read_tokens?: number
+  cache_creation_tokens?: number
+  cache_hit_rate_percent?: number
   created_at: string
 }
 
@@ -80,11 +86,33 @@ export interface SessionListResponse {
 
 export interface SessionDetailResponse {
   session: Session
+  token_summary: {
+    totalTokens: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheCreation5mTokens: number
+    cacheCreation1hTokens: number
+    messageCount: number
+    avgTokensPerMessage: number
+    cacheHitRatePercent: number
+  }
   conversations: Array<{
     id: string
     projectName: string
+    projectPath: string
     messageCount: number
+    startTime: string
     lastActivity: string
+    total_tokens: number
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_creation_tokens: number
+    cache_creation_5m_tokens: number
+    cache_creation_1h_tokens: number
+    cache_hit_rate_percent: number
   }>
   files: Array<{
     id: number
@@ -128,6 +156,10 @@ export interface SessionMessagesResponse {
     agentId?: string
     inputTokens?: number
     outputTokens?: number
+    cacheReadTokens?: number
+    cacheCreationTokens?: number
+    cacheCreation5mTokens?: number
+    cacheCreation1hTokens?: number
   }>
   total: number
   next_cursor?: string
@@ -157,6 +189,29 @@ export interface ConversationResponse {
   }
   file_path: string
   project_path: string
+  token_summary: {
+    totalTokens: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheCreation5mTokens: number
+    cacheCreation1hTokens: number
+    messageCount: number
+    avgTokensPerMessage: number
+    cacheHitRatePercent: number
+    byModel: Record<string, {
+      model: string
+      totalTokens: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      cacheCreation5mTokens: number
+      cacheCreation1hTokens: number
+      messageCount: number
+    }>
+  }
 }
 
 export interface PlanResponse {
@@ -176,6 +231,20 @@ export interface TokenSummaryResponse {
   peak_day_tokens: number
   peak_day_date?: string
   trend_percent: number
+  usage: {
+    total_tokens: number
+    input_tokens: number
+    output_tokens: number
+    cache_read_input_tokens: number
+    cache_creation_input_tokens: number
+    cache_creation_5m_input_tokens?: number
+    cache_creation_1h_input_tokens?: number
+  }
+  prompt_cache: {
+    cache_hit_rate_percent: number
+    cache_write_rate_percent: number
+    uncached_input_tokens: number
+  }
 }
 
 export interface TokenTimeseriesResponse {
@@ -184,6 +253,11 @@ export interface TokenTimeseriesResponse {
     bucket: string
     tokens: number
     requests: number
+    input_tokens: number
+    output_tokens: number
+    cache_read_input_tokens: number
+    cache_creation_input_tokens: number
+    cache_hit_rate_percent: number
   }>
 }
 
@@ -191,10 +265,22 @@ export interface TokenProjectsResponse {
   projects: Array<{
     name: string
     totalTokens: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    cacheCreation5mTokens: number
+    cacheCreation1hTokens: number
+    cacheHitRatePercent: number
     conversationCount: number
     topConversations: Array<{
       conversationId: string
       totalTokens: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      cacheHitRatePercent: number
       messageCount: number
     }>
   }>

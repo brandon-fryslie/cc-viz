@@ -4,13 +4,17 @@ import { ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip, Line, LineCh
 import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3TokenProjects, useV3TokenSummary, useV3TokenTimeseries } from '@/lib/api-v3'
 import { useListFreshness } from '@/lib/live/useListFreshness'
-import { MotionCard, MotionSection } from '@/lib/motion/primitives'
+import { MotionCard, MotionPingPong, MotionSection } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`
   return String(value)
+}
+
+function formatPercent(value: number | undefined): string {
+  return `${(value ?? 0).toFixed(1)}%`
 }
 
 export function TokenEconomicsPage() {
@@ -23,12 +27,22 @@ export function TokenEconomicsPage() {
   const summaryFreshness = useListFreshness(summary ? [summary] : [], {
     scopeKey: `token-summary-${start}-${end}`,
     getId: () => 'summary',
-    getHash: (item) => [item.total_tokens, item.burn_rate_per_day, item.peak_day_tokens, item.trend_percent, item.peak_day_date || ''].join('|'),
+    getHash: (item) => [
+      item.total_tokens,
+      item.burn_rate_per_day,
+      item.peak_day_tokens,
+      item.trend_percent,
+      item.peak_day_date || '',
+      item.usage?.cache_read_input_tokens ?? 0,
+      item.usage?.cache_creation_input_tokens ?? 0,
+      item.prompt_cache?.cache_hit_rate_percent ?? 0,
+      item.prompt_cache?.cache_write_rate_percent ?? 0,
+    ].join('|'),
   })
   const projectFreshness = useListFreshness(projects?.projects, {
     scopeKey: `token-projects-${start}-${end}`,
     getId: (item) => item.name,
-    getHash: (item) => [item.totalTokens, item.conversationCount, item.topConversations?.length ?? 0].join('|'),
+    getHash: (item) => [item.totalTokens, item.conversationCount, item.cacheReadTokens, item.cacheCreationTokens, item.cacheHitRatePercent, item.topConversations?.length ?? 0].join('|'),
   })
   const tokenPageFreshness = {
     // [LAW:one-source-of-truth] Page freshness is derived from summary/project sections.
@@ -61,38 +75,56 @@ export function TokenEconomicsPage() {
       </MotionSection>
 
       <Grid>
-        <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard flavor="orbit" index={0}>
+        <Grid.Col span={{ base: 12, md: 4, lg: 2 }}>
+          <MotionPingPong index={3} delay={0}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Total Tokens</Text>
               <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.total_tokens || 0)}</Title>
             </Card>
-          </MotionCard>
+          </MotionPingPong>
         </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard flavor="flip" index={1}>
+        <Grid.Col span={{ base: 12, md: 4, lg: 2 }}>
+          <MotionPingPong index={0} delay={0.1}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Burn / Day</Text>
               <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.burn_rate_per_day || 0)}</Title>
             </Card>
-          </MotionCard>
+          </MotionPingPong>
         </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard flavor="tilt" index={2}>
+        <Grid.Col span={{ base: 12, md: 4, lg: 2 }}>
+          <MotionPingPong index={1} delay={0.2}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Peak Day</Text>
               <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.peak_day_tokens || 0)}</Title>
               <Text size="xs" c="dimmed">{summary?.peak_day_date || ''}</Text>
             </Card>
-          </MotionCard>
+          </MotionPingPong>
         </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 3 }}>
-          <MotionCard flavor="pulse" index={3}>
+        <Grid.Col span={{ base: 12, md: 4, lg: 2 }}>
+          <MotionPingPong index={2} delay={0.3}>
             <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
               <Text size="sm" c="dimmed">Trend</Text>
               <Title order={3}>{summaryLoading ? '--' : `${summary?.trend_percent || 0}%`}</Title>
             </Card>
-          </MotionCard>
+          </MotionPingPong>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 4, lg: 2 }}>
+          <MotionPingPong index={4} delay={0.4}>
+            <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
+              <Text size="sm" c="dimmed">Cache Hit Rate</Text>
+              <Title order={3}>{summaryLoading ? '--' : formatPercent(summary?.prompt_cache.cache_hit_rate_percent)}</Title>
+              <Text size="xs" c="dimmed">reads / total input</Text>
+            </Card>
+          </MotionPingPong>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 4, lg: 2 }}>
+          <MotionPingPong index={5} delay={0.5}>
+            <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
+              <Text size="sm" c="dimmed">Uncached Input</Text>
+              <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.prompt_cache.uncached_input_tokens || 0)}</Title>
+              <Text size="xs" c="dimmed">write rate {formatPercent(summary?.prompt_cache.cache_write_rate_percent)}</Text>
+            </Card>
+          </MotionPingPong>
         </Grid.Col>
       </Grid>
 
@@ -112,6 +144,8 @@ export function TokenEconomicsPage() {
                     <YAxis />
                     <Tooltip />
                     <Line type="monotone" dataKey="tokens" stroke="var(--mantine-color-blue-6)" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="cache_read_input_tokens" stroke="var(--mantine-color-teal-6)" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="cache_creation_input_tokens" stroke="var(--mantine-color-orange-6)" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -156,6 +190,8 @@ export function TokenEconomicsPage() {
               <Table.Th>Project</Table.Th>
               <Table.Th>Conversations</Table.Th>
               <Table.Th>Tokens</Table.Th>
+              <Table.Th>Cache Reads</Table.Th>
+              <Table.Th>Cache Hit Rate</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -164,6 +200,8 @@ export function TokenEconomicsPage() {
                 <Table.Td>{project.name}</Table.Td>
                 <Table.Td>{project.conversationCount}</Table.Td>
                 <Table.Td>{formatTokens(project.totalTokens)}</Table.Td>
+                <Table.Td>{formatTokens(project.cacheReadTokens)}</Table.Td>
+                <Table.Td>{formatPercent(project.cacheHitRatePercent)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>

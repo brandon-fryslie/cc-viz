@@ -19,26 +19,28 @@ type Conversation struct {
 func (Conversation) TableName() string { return "conversations" }
 
 type ConversationMessage struct {
-	UUID                string    `gorm:"primaryKey;column:uuid"`
-	ConversationID      string    `gorm:"column:conversation_id"`
-	ParentUUID          *string   `gorm:"column:parent_uuid"`
-	Type                string    `gorm:"column:type"`
-	Role                *string   `gorm:"column:role"`
-	Timestamp           time.Time `gorm:"column:timestamp"`
-	CWD                 *string   `gorm:"column:cwd"`
-	GitBranch           *string   `gorm:"column:git_branch"`
-	SessionID           *string   `gorm:"column:session_id"`
-	AgentID             *string   `gorm:"column:agent_id"`
-	IsSidechain         bool      `gorm:"column:is_sidechain"`
-	RequestID           *string   `gorm:"column:request_id"`
-	Model               *string   `gorm:"column:model"`
-	InputTokens         int       `gorm:"column:input_tokens"`
-	OutputTokens        int       `gorm:"column:output_tokens"`
-	CacheReadTokens     int       `gorm:"column:cache_read_tokens"`
-	CacheCreationTokens int       `gorm:"column:cache_creation_tokens"`
-	ContentJSON         *string   `gorm:"column:content_json"`
-	ToolUseJSON         *string   `gorm:"column:tool_use_json"`
-	ToolResultJSON      *string   `gorm:"column:tool_result_json"`
+	UUID                  string    `gorm:"primaryKey;column:uuid"`
+	ConversationID        string    `gorm:"column:conversation_id"`
+	ParentUUID            *string   `gorm:"column:parent_uuid"`
+	Type                  string    `gorm:"column:type"`
+	Role                  *string   `gorm:"column:role"`
+	Timestamp             time.Time `gorm:"column:timestamp"`
+	CWD                   *string   `gorm:"column:cwd"`
+	GitBranch             *string   `gorm:"column:git_branch"`
+	SessionID             *string   `gorm:"column:session_id"`
+	AgentID               *string   `gorm:"column:agent_id"`
+	IsSidechain           bool      `gorm:"column:is_sidechain"`
+	RequestID             *string   `gorm:"column:request_id"`
+	Model                 *string   `gorm:"column:model"`
+	InputTokens           int       `gorm:"column:input_tokens"`
+	OutputTokens          int       `gorm:"column:output_tokens"`
+	CacheReadTokens       int       `gorm:"column:cache_read_tokens"`
+	CacheCreationTokens   int       `gorm:"column:cache_creation_tokens"`
+	CacheCreation5mTokens int       `gorm:"column:cache_creation_5m_tokens"`
+	CacheCreation1hTokens int       `gorm:"column:cache_creation_1h_tokens"`
+	ContentJSON           *string   `gorm:"column:content_json"`
+	ToolUseJSON           *string   `gorm:"column:tool_use_json"`
+	ToolResultJSON        *string   `gorm:"column:tool_result_json"`
 }
 
 func (ConversationMessage) TableName() string { return "conversation_messages" }
