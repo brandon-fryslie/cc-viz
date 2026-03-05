@@ -12,4 +12,4 @@ export {
 } from '@mantine/core';
 
 // Custom layout components
-export { V2Layout } from './V2Layout';
+export { AppShellRoot } from './AppShellRoot';

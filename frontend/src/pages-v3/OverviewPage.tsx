@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3Overview } from '@/lib/api-v3'
 import { useListFreshness } from '@/lib/live/useListFreshness'
+import { MotionCard, MotionSection } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 export function OverviewPage() {
@@ -25,7 +26,8 @@ export function OverviewPage() {
 
   return (
     <Stack>
-      <Group justify="space-between">
+      <MotionSection>
+        <Group justify="space-between">
         <div>
           <Title order={2}>Overview</Title>
           <Text c="dimmed">Compact operational summary with direct actions ({preset}).</Text>
@@ -35,7 +37,8 @@ export function OverviewPage() {
           <Button variant="light" onClick={() => navigate({ to: '/mission-control' })}>Mission Control</Button>
           <Button onClick={() => navigate({ to: '/sessions' })}>Open Sessions</Button>
         </Group>
-      </Group>
+        </Group>
+      </MotionSection>
 
       <Grid>
         {[
@@ -46,15 +49,18 @@ export function OverviewPage() {
           { label: 'Avg Tokens/Session', value: kpis?.avg_tokens_per_session ?? 0 },
         ].map((item) => (
           <Grid.Col key={item.label} span={{ base: 12, sm: 6, lg: 4 }}>
-            <Card withBorder className={overviewFreshness.getItemClassName('overview')}>
-              <Text size="sm" c="dimmed">{item.label}</Text>
-              <Title order={3}>{isLoading ? '--' : item.value.toLocaleString()}</Title>
-            </Card>
+            <MotionCard>
+              <Card withBorder className={overviewFreshness.getItemClassName('overview')}>
+                <Text size="sm" c="dimmed">{item.label}</Text>
+                <Title order={3}>{isLoading ? '--' : item.value.toLocaleString()}</Title>
+              </Card>
+            </MotionCard>
           </Grid.Col>
         ))}
       </Grid>
 
-      <Card withBorder>
+      <MotionSection delay={0.1}>
+        <Card withBorder>
         <Stack gap="sm">
           <Text fw={600}>Quick Links</Text>
           <Group>
@@ -63,7 +69,8 @@ export function OverviewPage() {
             <Button variant="default" onClick={() => navigate({ to: '/extensions-config' })}>Extensions & Config</Button>
           </Group>
         </Stack>
-      </Card>
+        </Card>
+      </MotionSection>
     </Stack>
   )
 }

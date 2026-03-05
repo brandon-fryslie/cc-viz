@@ -19,6 +19,7 @@ import { parseFocusFromSearch } from '@/lib/deep-links'
 import { useV3Session, useV3SessionMessages, useV3Sessions } from '@/lib/api-v3'
 import { useLiveTopic } from '@/lib/live/LiveProvider'
 import { useListFreshness } from '@/lib/live/useListFreshness'
+import { MotionCard, MotionSection } from '@/lib/motion/primitives'
 
 interface SessionsExplorerPageProps {
   sessionId?: string
@@ -178,18 +179,21 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
 
   return (
     <Stack>
-      <Group justify="space-between">
+      <MotionSection>
+        <Group justify="space-between">
         <div>
           <Title order={2}>Sessions Explorer</Title>
           <Text c="dimmed">Canonical session-centric view for messages, todos, plans, files, and related conversations.</Text>
           <FreshnessBadges freshness={pageFreshness} label="Page freshness" />
         </div>
         {selectedSessionId && <Badge variant="light">Session {selectedSessionId.slice(0, 8)}</Badge>}
-      </Group>
+        </Group>
+      </MotionSection>
 
       <Grid>
         <Grid.Col span={{ base: 12, lg: 3 }}>
-          <Card withBorder>
+          <MotionCard>
+            <Card withBorder>
             <Stack>
               <FreshnessBadges freshness={sessionsFreshness} label="Session list" />
               <TextInput
@@ -223,11 +227,13 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                 </Stack>
               </ScrollArea>
             </Stack>
-          </Card>
+            </Card>
+          </MotionCard>
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, lg: 6 }}>
-          <Card withBorder>
+          <MotionCard>
+            <Card withBorder>
             {detailLoading ? (
               <Text size="sm" c="dimmed">Loading session detail...</Text>
             ) : !sessionDetail ? (
@@ -321,11 +327,13 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                 </Tabs.Panel>
               </Tabs>
             )}
-          </Card>
+            </Card>
+          </MotionCard>
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, lg: 3 }}>
-          <Card withBorder>
+          <MotionCard>
+            <Card withBorder>
             <Stack>
               <Text fw={600}>Artifact Detail</Text>
               {!selection ? (
@@ -337,7 +345,8 @@ export function SessionsExplorerPage({ sessionId }: SessionsExplorerPageProps) {
                 </>
               )}
             </Stack>
-          </Card>
+            </Card>
+          </MotionCard>
         </Grid.Col>
       </Grid>
     </Stack>

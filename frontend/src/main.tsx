@@ -4,7 +4,7 @@ import { RouterProvider } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MantineProvider } from '@mantine/core'
 import { router } from './router'
-import { legacyRouter } from './legacy-router'
+import { MotionProvider } from './lib/motion/MotionProvider'
 import { theme } from './theme'
 import '@mantine/core/styles.css'
 import '@mantine/dates/styles.css'
@@ -31,7 +31,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <MantineProvider theme={theme} defaultColorScheme="auto">
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={window.location.pathname.startsWith('/legacy') ? legacyRouter : router} />
+        <MotionProvider>
+          <RouterProvider router={router} />
+        </MotionProvider>
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

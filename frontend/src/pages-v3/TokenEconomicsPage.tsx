@@ -4,6 +4,7 @@ import { ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip, Line, LineCh
 import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3TokenProjects, useV3TokenSummary, useV3TokenTimeseries } from '@/lib/api-v3'
 import { useListFreshness } from '@/lib/live/useListFreshness'
+import { MotionCard, MotionSection } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 function formatTokens(value: number): string {
@@ -44,7 +45,8 @@ export function TokenEconomicsPage() {
 
   return (
     <Stack>
-      <Group justify="space-between">
+      <MotionSection>
+        <Group justify="space-between">
         <div>
           <Title order={2}>Token Economics</Title>
           <Text c="dimmed">Live token burn, trends, and top consumers ({preset}).</Text>
@@ -55,33 +57,42 @@ export function TokenEconomicsPage() {
           value={bucket}
           onChange={(value) => setBucket(value as 'day' | 'hour')}
         />
-      </Group>
+        </Group>
+      </MotionSection>
 
       <Grid>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
-            <Text size="sm" c="dimmed">Total Tokens</Text>
-            <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.total_tokens || 0)}</Title>
-          </Card>
+          <MotionCard>
+            <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
+              <Text size="sm" c="dimmed">Total Tokens</Text>
+              <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.total_tokens || 0)}</Title>
+            </Card>
+          </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
-            <Text size="sm" c="dimmed">Burn / Day</Text>
-            <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.burn_rate_per_day || 0)}</Title>
-          </Card>
+          <MotionCard>
+            <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
+              <Text size="sm" c="dimmed">Burn / Day</Text>
+              <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.burn_rate_per_day || 0)}</Title>
+            </Card>
+          </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
-            <Text size="sm" c="dimmed">Peak Day</Text>
-            <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.peak_day_tokens || 0)}</Title>
-            <Text size="xs" c="dimmed">{summary?.peak_day_date || ''}</Text>
-          </Card>
+          <MotionCard>
+            <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
+              <Text size="sm" c="dimmed">Peak Day</Text>
+              <Title order={3}>{summaryLoading ? '--' : formatTokens(summary?.peak_day_tokens || 0)}</Title>
+              <Text size="xs" c="dimmed">{summary?.peak_day_date || ''}</Text>
+            </Card>
+          </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 3 }}>
-          <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
-            <Text size="sm" c="dimmed">Trend</Text>
-            <Title order={3}>{summaryLoading ? '--' : `${summary?.trend_percent || 0}%`}</Title>
-          </Card>
+          <MotionCard>
+            <Card withBorder className={summaryFreshness.getItemClassName('summary')}>
+              <Text size="sm" c="dimmed">Trend</Text>
+              <Title order={3}>{summaryLoading ? '--' : `${summary?.trend_percent || 0}%`}</Title>
+            </Card>
+          </MotionCard>
         </Grid.Col>
       </Grid>
 

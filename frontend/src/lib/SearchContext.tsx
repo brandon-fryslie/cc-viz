@@ -9,7 +9,6 @@ export type SearchScope =
   | { kind: 'everything' }
   | { kind: 'conversations' }
   | { kind: 'this-session'; sessionId: string; sessionName: string }
-  | { kind: 'requests' }
 
 /**
  * SearchContext interface - [LAW:single-enforcer] keyboard shortcuts managed here
@@ -44,10 +43,6 @@ function deriveScopeFromRoute(pathname: string): SearchScope {
     const sessionId = decodeURIComponent(conversationMatch[1])
     // Session name can be extracted from conversation data, for now use ID
     return { kind: 'this-session', sessionId, sessionName: sessionId.substring(0, 8) }
-  }
-
-  if (pathname === '/requests' || pathname.startsWith('/requests/')) {
-    return { kind: 'requests' }
   }
 
   return { kind: 'everything' }

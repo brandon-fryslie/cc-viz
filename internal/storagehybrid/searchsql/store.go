@@ -42,7 +42,7 @@ func (s *Store) NormalizeDataTypes(dataTypes []string) []string {
 	normalized := make([]string, 0, len(dataTypes))
 	for _, dataType := range dataTypes {
 		switch dataType {
-		case "conversations", "extensions", "todos", "plans", "requests":
+		case "conversations", "extensions", "todos", "plans":
 			normalized = append(normalized, dataType)
 		}
 	}

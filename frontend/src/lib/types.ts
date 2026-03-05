@@ -306,7 +306,7 @@ export interface CircuitBreakerConfig {
 
 /**
  * Extended provider configuration including circuit breaker and fallback settings
- * Matches the response from GET /api/v2/routing/config
+ * Legacy routing config shape retained only as an internal DTO.
  */
 export interface RoutingProviderConfig {
   format: 'anthropic' | 'openai'
@@ -318,7 +318,7 @@ export interface RoutingProviderConfig {
 
 /**
  * Full routing configuration response
- * Matches the response from GET /api/v2/routing/config
+ * Legacy routing config shape retained only as an internal DTO.
  */
 export interface RoutingConfig {
   providers: Record<string, RoutingProviderConfig>
@@ -340,7 +340,7 @@ export interface ProviderHealth {
 
 /**
  * Routing statistics response
- * Matches the response from GET /api/v2/routing/stats
+ * Legacy routing stats shape retained only as an internal DTO.
  */
 export interface RoutingStatsResponse {
   providers: ProviderStatsResponse

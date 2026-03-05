@@ -1,6 +1,0 @@
-export { DashboardPage } from './Dashboard'
-export { RequestsPage } from './Requests'
-export { UsagePage } from './Usage'
-export { PerformancePage } from './Performance'
-export { RoutingPage } from './Routing'
-export { SettingsPage } from './Settings'

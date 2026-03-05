@@ -238,6 +238,11 @@ body {
   animation: fresh-row-updated 10s ease-out;
 }
 
+[data-motion="off"] .fresh-flash-new,
+[data-motion="off"] .fresh-flash-updated {
+  animation: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .fresh-flash-new,
   .fresh-flash-updated {

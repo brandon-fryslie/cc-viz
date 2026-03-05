@@ -14,11 +14,13 @@ import {
   ScrollArea,
   SegmentedControl,
   Stack,
+  Switch,
   Text,
   TextInput,
   Title,
 } from '@mantine/core'
 import { useDisclosure, useHotkeys } from '@mantine/hooks'
+import { motion } from 'framer-motion'
 import {
   IconActivity,
   IconBolt,
@@ -30,6 +32,8 @@ import {
 import { useV3Search } from '@/lib/api-v3'
 import { routeFromSearchResult } from '@/lib/deep-links'
 import { useLive } from '@/lib/live/LiveProvider'
+import { useMotionPreference } from '@/lib/motion/MotionProvider'
+import { MotionListItem, MotionPage } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 interface NavItem {
@@ -52,6 +56,7 @@ export function AppShellRoot() {
   const location = useLocation()
   const navigate = useNavigate()
   const { connected, lastHeartbeat } = useLive()
+  const { motionEnabled, setMotionEnabled, shouldAnimate } = useMotionPreference()
   const { preset, setPreset } = useV3DateRange()
 
   const [paletteOpen, { open: openPalette, close: closePalette }] = useDisclosure(false)
@@ -84,12 +89,18 @@ export function AppShellRoot() {
           collapsed: { mobile: !opened },
         }}
         padding="md"
+        data-motion={motionEnabled ? 'on' : 'off'}
       >
         <AppShell.Header>
           <Group h="100%" px="md" justify="space-between">
             <Group>
               <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
-              <Title order={4}>CC-Viz</Title>
+              <motion.div
+                animate={shouldAnimate ? { y: [0, -2, 0], scale: [1, 1.04, 1], rotate: [0, -1, 0] } : undefined}
+                transition={{ duration: 2.4, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+              >
+                <Title order={4}>CC-Viz</Title>
+              </motion.div>
             </Group>
             <Group>
               <SegmentedControl
@@ -105,6 +116,15 @@ export function AppShellRoot() {
               <Button variant="light" leftSection={<IconSearch size={14} />} onClick={openPalette}>
                 Search
               </Button>
+              <Switch
+                label="Motion"
+                size="sm"
+                checked={motionEnabled}
+                onChange={(event) => setMotionEnabled(event.currentTarget.checked)}
+              />
+              <Badge variant="light" color={motionEnabled ? 'violet' : 'gray'}>
+                {motionEnabled ? 'MAX' : 'OFF'}
+              </Badge>
               <Group gap={6}>
                 <Badge color={connected ? 'green' : 'red'} variant="dot">
                   {connected ? 'Live' : 'Offline'}
@@ -113,9 +133,6 @@ export function AppShellRoot() {
                   {lastHeartbeat ? new Date(lastHeartbeat).toLocaleTimeString() : 'No heartbeat'}
                 </Text>
               </Group>
-              <Button component="a" href="/legacy" variant="default">
-                Open old UI
-              </Button>
             </Group>
           </Group>
         </AppShell.Header>
@@ -129,13 +146,14 @@ export function AppShellRoot() {
           <AppShell.Section grow component={ScrollArea}>
             <Stack gap={4}>
               {navItems.map((item) => (
-                <NavLink
-                  key={item.href}
-                  label={item.label}
-                  leftSection={<item.icon size={18} stroke={1.7} />}
-                  active={location.pathname === item.href || (item.href !== '/' && location.pathname.startsWith(item.href))}
-                  onClick={() => navigate({ to: item.href })}
-                />
+                <MotionListItem key={item.href}>
+                  <NavLink
+                    label={item.label}
+                    leftSection={<item.icon size={18} stroke={1.7} />}
+                    active={location.pathname === item.href || (item.href !== '/' && location.pathname.startsWith(item.href))}
+                    onClick={() => navigate({ to: item.href })}
+                  />
+                </MotionListItem>
               ))}
             </Stack>
           </AppShell.Section>
@@ -147,7 +165,9 @@ export function AppShellRoot() {
         </AppShell.Navbar>
 
         <AppShell.Main>
-          <Outlet />
+          <MotionPage routeKey={location.pathname}>
+            <Outlet />
+          </MotionPage>
         </AppShell.Main>
       </AppShell>
 

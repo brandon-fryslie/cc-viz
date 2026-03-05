@@ -1,5 +1,6 @@
 import { Card, Code, Stack, Text, Title } from '@mantine/core'
 import { useV3Plan } from '@/lib/api-v3'
+import { MotionCard, MotionSection } from '@/lib/motion/primitives'
 
 export function PlanDetailPage({ planId }: { planId: string }) {
   const { data, isLoading, error } = useV3Plan(planId)
@@ -9,19 +10,25 @@ export function PlanDetailPage({ planId }: { planId: string }) {
 
   return (
     <Stack>
-      <div>
-        <Title order={2}>Plan</Title>
-        <Text c="dimmed">{data.display_name}</Text>
-      </div>
+      <MotionSection>
+        <div>
+          <Title order={2}>Plan</Title>
+          <Text c="dimmed">{data.display_name}</Text>
+        </div>
+      </MotionSection>
 
-      <Card withBorder>
-        <Text size="sm" c="dimmed">{data.file_name}</Text>
-        <Text mt="xs">{data.preview}</Text>
-      </Card>
+      <MotionCard>
+        <Card withBorder>
+          <Text size="sm" c="dimmed">{data.file_name}</Text>
+          <Text mt="xs">{data.preview}</Text>
+        </Card>
+      </MotionCard>
 
-      <Card withBorder>
-        <Code block>{data.content}</Code>
-      </Card>
+      <MotionCard>
+        <Card withBorder>
+          <Code block>{data.content}</Code>
+        </Card>
+      </MotionCard>
     </Stack>
   )
 }

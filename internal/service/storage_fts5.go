@@ -39,36 +39,6 @@ func createFTS5Table(db *sql.DB) error {
 		log.Println("✅ Created conversations_fts FTS5 table")
 	}
 
-	// Create requests_fts virtual table
-	var requestsFtsExists int
-	err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='requests_fts'").Scan(&requestsFtsExists)
-	if err != nil {
-		return fmt.Errorf("failed to check if requests_fts table exists: %w", err)
-	}
-
-	if requestsFtsExists == 0 {
-		requestsFtsSchema := `
-		CREATE VIRTUAL TABLE requests_fts USING fts5(
-			request_id UNINDEXED,
-			timestamp UNINDEXED,
-			method,
-			endpoint,
-			model,
-			provider,
-			tool_names,
-			response_text,
-			request_body_text,
-			tokenize='porter unicode61'
-		);
-		`
-
-		if _, err := db.Exec(requestsFtsSchema); err != nil {
-			return fmt.Errorf("failed to create requests_fts table: %w", err)
-		}
-
-		log.Println("✅ Created requests_fts FTS5 table")
-	}
-
 	// Create or repair extensions_fts virtual table.
 	// [LAW:one-source-of-truth] extensions_fts is derived data; when schema drifts we recreate it.
 	if err := ensureExtensionsFTSSchema(db); err != nil {
@@ -239,21 +209,6 @@ func dropLegacyExtensionsFTSTriggers(db *sql.DB) error {
 // fts5Enabled returns true in production builds
 func fts5Enabled() bool {
 	return true
-}
-
-// indexRequestFTS indexes a request in the requests_fts table
-func (s *SQLiteStorageService) indexRequestFTS(requestID, timestamp, method, endpoint, model, provider, toolNames, responseText, requestBodyText string) error {
-	query := `
-		INSERT OR REPLACE INTO requests_fts (request_id, timestamp, method, endpoint, model, provider, tool_names, response_text, request_body_text)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	_, err := s.db.Exec(query, requestID, timestamp, method, endpoint, model, provider, toolNames, responseText, requestBodyText)
-	if err != nil {
-		return fmt.Errorf("failed to index request in FTS: %w", err)
-	}
-
-	return nil
 }
 
 // indexExtensionFTS indexes an extension in the extensions_fts table

@@ -1,49 +1,18 @@
-# Legacy Request Analytics Removal (Runtime Contract)
+# Legacy Request Analytics Removal (Completed)
 
-## What Changed
+Legacy runtime surfaces have been removed.
 
-The runtime storage contract no longer requires legacy request ingestion/analytics behavior.
+## Completed Outcomes
 
-- Runtime interface: `internal/service/storage.go` -> `RuntimeStorageService`
-- Legacy interface: `internal/service/storage.go` -> `LegacyRequestStorageService`
-- `StorageService` now aliases runtime only.
+1. Runtime API surface is now `health + /api/v3/*` only.  
+   `// [LAW:one-source-of-truth] one active API generation`
+2. Legacy frontend namespace `/legacy` has been removed from runtime entrypoints.
+3. Runtime storage contract is `RuntimeStorageService` only (no legacy request analytics contract in active runtime code paths).
+4. Startup schema cleanup drops request-era tables/indexes if they still exist:
+   - `requests`
+   - `requests_fts`
+   - request-era indexes
 
-## Removed From Runtime Contract
+## Operational Note
 
-These methods are now legacy-only and are not required for runtime storage implementations:
-
-- `SaveRequest`
-- `GetRequests`
-- `ClearRequests`
-- `UpdateRequestWithGrading`
-- `UpdateRequestWithResponse`
-- `EnsureDirectoryExists`
-- `GetRequestByShortID`
-- `GetConfig`
-- `GetAllRequests`
-- `GetRequestsSummary`
-- `GetRequestsSummaryPaginated`
-- `GetLatestRequestDate`
-- `SearchRequests`
-- `GetProviderStats`
-- `GetSubagentStats`
-- `GetToolStats`
-- `GetPerformanceStats`
-
-## Runtime Behavior Changes
-
-- Unified search defaults now exclude request-search domain unless explicitly requested. // [LAW:one-source-of-truth] default search domains are centralized in `internal/storagehybrid/searchsql/store.go`
-- Startup route banner no longer advertises removed `/api/requests` surface.
-
-## Deferred Compatibility
-
-- Frontend still issues `/api/v2/requests/summary` on some non-priority paths, producing 404.
-- This does not block search/session recovery and is intentionally deferred for follow-up cleanup.
-
-## Reintroduction Criteria
-
-Reintroduce legacy request analytics only if all conditions are true:
-
-1. A concrete product requirement depends on request analytics, not just legacy parity.
-2. Request analytics has a dedicated boundary/interface separate from runtime search/session contract. // [LAW:single-enforcer]
-3. API + frontend contract is explicitly versioned and tested independently from search/session acceptance.
+The server now treats any removed legacy route as not-found. This is intentional and part of the v3-only cutover.

@@ -22,14 +22,6 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
-    },
-    {
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
-    },
   ],
 
   webServer: {
@@ -47,6 +39,4 @@ export default defineConfig({
     },
   },
 
-  // Token Economics specific settings
-  dependencies: ['install-deps'],
 })

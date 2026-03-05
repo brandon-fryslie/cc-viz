@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { useV3MissionActivity, useV3MissionControl } from '@/lib/api-v3'
 import { useListFreshness } from '@/lib/live/useListFreshness'
+import { MotionCard, MotionListItem, MotionSection } from '@/lib/motion/primitives'
 import { useV3DateRange } from '@/lib/v3-date-range'
 
 export function MissionControlPage() {
@@ -31,7 +32,8 @@ export function MissionControlPage() {
 
   return (
     <Stack>
-      <Group justify="space-between">
+      <MotionSection>
+        <Group justify="space-between">
         <div>
           <Title order={2}>Mission Control</Title>
           <Text c="dimmed">Live command center for sessions, activity, and health ({preset}).</Text>
@@ -41,31 +43,38 @@ export function MissionControlPage() {
           <Button variant="default" onClick={() => navigate({ to: '/search' })}>Search</Button>
           <Button onClick={() => navigate({ to: '/sessions' })}>Jump to Sessions</Button>
         </Group>
-      </Group>
+        </Group>
+      </MotionSection>
 
       <Grid>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <Card withBorder>
-            <Text c="dimmed" size="sm">Active Sessions</Text>
-            <Title order={3}>{isLoading ? '--' : (data?.kpis.active_sessions ?? 0).toLocaleString()}</Title>
-          </Card>
+          <MotionCard>
+            <Card withBorder>
+              <Text c="dimmed" size="sm">Active Sessions</Text>
+              <Title order={3}>{isLoading ? '--' : (data?.kpis.active_sessions ?? 0).toLocaleString()}</Title>
+            </Card>
+          </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <Card withBorder>
-            <Text c="dimmed" size="sm">Window Tokens</Text>
-            <Title order={3}>{isLoading ? '--' : (data?.kpis.total_tokens_window ?? 0).toLocaleString()}</Title>
-          </Card>
+          <MotionCard>
+            <Card withBorder>
+              <Text c="dimmed" size="sm">Window Tokens</Text>
+              <Title order={3}>{isLoading ? '--' : (data?.kpis.total_tokens_window ?? 0).toLocaleString()}</Title>
+            </Card>
+          </MotionCard>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 4 }}>
-          <Card withBorder>
-            <Text c="dimmed" size="sm">Health</Text>
-            <Group mt="xs">
-              <Badge color={data?.health.db_connected ? 'green' : 'red'} variant="light">
-                {data?.health.db_connected ? 'DB Connected' : 'DB Disconnected'}
-              </Badge>
-              <Badge variant="outline">Lag: {(data?.health.indexer_lag_seconds ?? 0)}s</Badge>
-            </Group>
-          </Card>
+          <MotionCard>
+            <Card withBorder>
+              <Text c="dimmed" size="sm">Health</Text>
+              <Group mt="xs">
+                <Badge color={data?.health.db_connected ? 'green' : 'red'} variant="light">
+                  {data?.health.db_connected ? 'DB Connected' : 'DB Disconnected'}
+                </Badge>
+                <Badge variant="outline">Lag: {(data?.health.indexer_lag_seconds ?? 0)}s</Badge>
+              </Group>
+            </Card>
+          </MotionCard>
         </Grid.Col>
       </Grid>
 
@@ -123,7 +132,8 @@ export function MissionControlPage() {
                     <Text size="sm" c="dimmed">No activity events.</Text>
                   ) : (
                     (activityData?.events || []).map((event) => (
-                      <Card key={event.id} withBorder padding="sm" className={activityFreshness.getItemClassName(event.id)}>
+                      <MotionListItem key={event.id}>
+                        <Card withBorder padding="sm" className={activityFreshness.getItemClassName(event.id)}>
                         <Group justify="space-between">
                           <Badge variant="outline">{event.type}</Badge>
                           <Text size="xs" c="dimmed">{new Date(event.timestamp).toLocaleString()}</Text>
@@ -138,7 +148,8 @@ export function MissionControlPage() {
                         >
                           Open
                         </Button>
-                      </Card>
+                        </Card>
+                      </MotionListItem>
                     ))
                   )}
                 </Stack>

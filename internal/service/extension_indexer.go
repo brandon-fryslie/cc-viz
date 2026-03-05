@@ -18,7 +18,7 @@ type ExtensionIndexer struct {
 }
 
 // NewExtensionIndexer creates a new ExtensionIndexer
-func NewExtensionIndexer(storage StorageService) *ExtensionIndexer {
+func NewExtensionIndexer(storage RuntimeStorageService) *ExtensionIndexer {
 	sqliteStorage, ok := storage.(*SQLiteStorageService)
 	if !ok {
 		log.Printf("❌ ExtensionIndexer: storage is not SQLiteStorageService (type=%T)", storage)

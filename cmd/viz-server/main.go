@@ -75,80 +75,6 @@ func main() {
 	// Health check
 	r.HandleFunc("/health", h.Health).Methods("GET")
 
-	// V1 API - Stats endpoints
-	r.HandleFunc("/api/stats", h.GetStats).Methods("GET")
-	r.HandleFunc("/api/stats/hourly", h.GetHourlyStats).Methods("GET")
-	r.HandleFunc("/api/stats/models", h.GetModelStats).Methods("GET")
-
-	// V1 API - Conversation endpoints (specific routes before parameterized)
-	r.HandleFunc("/api/conversations", h.GetConversations).Methods("GET")
-	r.HandleFunc("/api/conversations/search", h.SearchConversations).Methods("GET")
-	r.HandleFunc("/api/conversations/project", h.GetConversationsByProject).Methods("GET")
-	r.HandleFunc("/api/conversations/{id}", h.GetConversationByID).Methods("GET")
-
-	// V2 API - cleaner response format for new dashboard
-	r.HandleFunc("/api/v2/search", h.SearchUnifiedV2).Methods("GET")
-	r.HandleFunc("/api/v2/conversations", h.GetConversationsV2).Methods("GET")
-	r.HandleFunc("/api/v2/conversations/search", h.SearchConversations).Methods("GET")
-	r.HandleFunc("/api/v2/conversations/reindex", h.ReindexConversationsV2).Methods("POST")
-	// Specific routes must be registered BEFORE generic {id} routes
-	r.HandleFunc("/api/v2/conversations/{id}/messages", h.GetConversationMessagesV2).Methods("GET")
-	r.HandleFunc("/api/v2/conversations/{id}", h.GetConversationByIDV2).Methods("GET")
-	// Token Economics endpoints (must be after specific {id} routes to avoid route conflicts)
-	r.HandleFunc("/api/v2/conversations/{id}/token-summary", h.GetConversationTokenSummaryV2).Methods("GET")
-	r.HandleFunc("/api/v2/conversations/with-tokens", h.GetConversationsWithTokensV2).Methods("GET")
-	r.HandleFunc("/api/v2/stats/projects", h.GetProjectTokenStatsV2).Methods("GET")
-
-	r.HandleFunc("/api/v2/stats", h.GetWeeklyStatsV2).Methods("GET")
-	r.HandleFunc("/api/v2/stats/hourly", h.GetHourlyStatsV2).Methods("GET")
-	r.HandleFunc("/api/v2/stats/models", h.GetModelStatsV2).Methods("GET")
-
-	// V2 Configuration API
-	r.HandleFunc("/api/v2/config", h.GetConfigV2).Methods("GET")
-	r.HandleFunc("/api/v2/config/providers", h.GetProvidersV2).Methods("GET")
-	r.HandleFunc("/api/v2/config/subagents", h.GetSubagentConfigV2).Methods("GET")
-
-	// CC-VIZ Claude Directory API
-	r.HandleFunc("/api/v2/claude/config", h.GetClaudeConfigV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/projects", h.GetClaudeProjectsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/projects/{id}", h.GetClaudeProjectDetailV2).Methods("GET")
-
-	// CC-VIZ Session Data API
-	r.HandleFunc("/api/v2/claude/todos", h.GetTodosV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/todos/search", h.SearchTodosV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/todos/reindex", h.ReindexTodosV2).Methods("POST")
-	r.HandleFunc("/api/v2/claude/todos/{session_uuid}", h.GetTodoDetailV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/plans", h.GetPlansV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/plans/search", h.SearchPlansV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/plans/{id}", h.GetPlanDetailV2).Methods("GET")
-
-	// CC-VIZ Extension API
-	r.HandleFunc("/api/v2/claude/extensions", h.GetExtensionsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/extensions/{type}/{id}", h.GetExtensionDetailV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/extensions/plugin/{id}/toggle", h.ToggleExtensionV2).Methods("POST")
-	r.HandleFunc("/api/v2/claude/extensions/stats", h.GetExtensionStatsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/extensions/reindex", h.ReindexExtensionsV2).Methods("POST")
-	r.HandleFunc("/api/v2/plugins", h.GetPluginsV2).Methods("GET")
-	r.HandleFunc("/api/v2/plugins/{id}", h.GetPluginDetailV2).Methods("GET")
-	r.HandleFunc("/api/v2/marketplaces", h.GetMarketplacesV2).Methods("GET")
-
-	// CC-VIZ Subagent Graph API
-	r.HandleFunc("/api/v2/claude/subagent-graph/hierarchy", h.GetSubagentHierarchyV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/subagent-graph/stats", h.GetSubagentGraphStatsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/subagent-graph/hierarchy/{session_id}/agent/{agent_id}", h.GetSubagentGraphAgentV2).Methods("GET")
-
-	// CC-VIZ Sessions API
-	r.HandleFunc("/api/v2/claude/sessions", h.GetSessionsV2).Methods("GET")
-	// Specific session routes BEFORE generic {id} route
-	r.HandleFunc("/api/v2/claude/sessions/stats", h.GetSessionStatsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/sessions/{id}/conversations", h.GetSessionConversationsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/sessions/{id}/files", h.GetSessionFileChangesV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/sessions/{id}/plans", h.GetSessionPlansV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/plans/{id}/sessions", h.GetPlanSessionsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/sessions/{id}", h.GetSessionDetailV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/conversations/{id}/sessions", h.GetConversationSessionsV2).Methods("GET")
-	r.HandleFunc("/api/v2/claude/files", h.GetFileSessionsV2).Methods("GET")
-
 	// V3 API - realtime Mantine UI
 	r.HandleFunc("/api/v3/overview", h.GetOverviewV3).Methods("GET")
 	r.HandleFunc("/api/v3/mission-control", h.GetMissionControlV3).Methods("GET")
@@ -164,9 +90,16 @@ func main() {
 	r.HandleFunc("/api/v3/extensions-config", h.GetExtensionsConfigV3).Methods("GET")
 	r.HandleFunc("/api/v3/extensions-config/{type}/{id}", h.GetExtensionConfigDetailV3).Methods("GET")
 	r.HandleFunc("/api/v3/extensions-config/plugins", h.GetExtensionsConfigPluginsV3).Methods("GET")
-	r.HandleFunc("/api/v3/extensions-config/reindex", h.ReindexExtensionsV2).Methods("POST")
+	r.HandleFunc("/api/v3/extensions-config/reindex", h.ReindexExtensionsV3).Methods("POST")
 	r.HandleFunc("/api/v3/search", h.GetSearchV3).Methods("GET")
 	r.HandleFunc("/api/v3/live/ws", h.LiveWSV3).Methods("GET")
+
+	// [LAW:single-enforcer] Removed API surfaces are rejected at one boundary even when SPA assets are embedded.
+	r.PathPrefix("/api/v2/").HandlerFunc(h.NotFound)
+	r.PathPrefix("/api/stats").HandlerFunc(h.NotFound)
+	r.PathPrefix("/api/conversations").HandlerFunc(h.NotFound)
+	r.PathPrefix("/legacy").HandlerFunc(h.NotFound)
+	r.PathPrefix("/api/").HandlerFunc(h.NotFound)
 
 	// Frontend static files (when embedded)
 	// SINGLE SOURCE OF TRUTH: embedFrontend variable set by build tags
@@ -181,11 +114,8 @@ func main() {
 		r.PathPrefix("/").Handler(staticHandler)
 		logger.Println("Frontend embedded and will be served at /")
 	} else {
-		// No frontend embedded - serve legacy UI or 404
-		r.HandleFunc("/", h.UI).Methods("GET")
-		r.HandleFunc("/ui", h.UI).Methods("GET")
 		r.NotFoundHandler = http.HandlerFunc(h.NotFound)
-		logger.Println("Frontend not embedded - using legacy UI handler")
+		logger.Println("Frontend not embedded - API-only mode")
 	}
 
 	// Get port from environment or default
@@ -205,10 +135,7 @@ func main() {
 	go func() {
 		logger.Printf("viz-server running on http://localhost:%s", port)
 		logger.Printf("Dashboard API endpoints available at:")
-		logger.Printf("   - GET  /api/stats (Statistics)")
-		logger.Printf("   - GET  /api/conversations (Conversations)")
-		logger.Printf("   - GET  /api/v2/* (V2 API)")
-		logger.Printf("   - GET  /api/v2/claude/subagent-graph/* (Subagent Graph)")
+		logger.Printf("   - GET  /api/v3/* (Runtime API)")
 		logger.Printf("   - GET  /health")
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

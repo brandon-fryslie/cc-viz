@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/brandon-fryslie/cc-viz/internal/model"
+	"github.com/brandon-fryslie/cc-viz/internal/service"
 )
 
 var v3Upgrader = websocket.Upgrader{
@@ -742,6 +743,27 @@ func (h *DataHandler) loadClaudeConfigSnapshot() map[string]interface{} {
 	return response
 }
 
+func parseClaudeMdSections(content string) []map[string]interface{} {
+	sections := []map[string]interface{}{}
+	tags := []string{"system-reminder", "memory", "personal-note", "universal-laws", "guidelines", "context-specific"}
+	for _, tag := range tags {
+		openTag := "<" + tag + ">"
+		if !strings.Contains(content, openTag) {
+			continue
+		}
+		sections = append(sections, map[string]interface{}{
+			"name":     tag,
+			"position": strings.Index(content, openTag),
+		})
+	}
+	sort.Slice(sections, func(i, j int) bool {
+		pi, _ := sections[i]["position"].(int)
+		pj, _ := sections[j]["position"].(int)
+		return pi < pj
+	})
+	return sections
+}
+
 func (h *DataHandler) GetExtensionsConfigV3(w http.ResponseWriter, r *http.Request) {
 	extType := r.URL.Query().Get("type")
 	source := r.URL.Query().Get("source")
@@ -832,6 +854,26 @@ func (h *DataHandler) GetExtensionsConfigPluginsV3(w http.ResponseWriter, r *htt
 	writeJSONResponse(w, map[string]interface{}{
 		"plugins":      plugins,
 		"marketplaces": marketplaces,
+	})
+}
+
+func (h *DataHandler) ReindexExtensionsV3(w http.ResponseWriter, r *http.Request) {
+	storage, ok := h.storageService.(*service.SQLiteStorageService)
+	if !ok {
+		writeErrorResponse(w, "Storage service not available", http.StatusInternalServerError)
+		return
+	}
+
+	indexer := service.NewExtensionIndexer(storage)
+	if err := indexer.IndexExtensions(); err != nil {
+		log.Printf("Error re-indexing extensions: %v", err)
+		writeErrorResponse(w, "Failed to re-index extensions", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSONResponse(w, map[string]string{
+		"status":  "ok",
+		"message": "Extensions re-indexed successfully",
 	})
 }
 

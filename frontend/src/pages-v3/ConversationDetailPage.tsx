@@ -1,5 +1,6 @@
 import { Badge, Card, Code, Group, ScrollArea, Stack, Text, Title } from '@mantine/core'
 import { useV3Conversation } from '@/lib/api-v3'
+import { MotionCard, MotionListItem, MotionSection } from '@/lib/motion/primitives'
 
 function formatTimestamp(timestamp: string | undefined): string {
   if (!timestamp) {
@@ -34,25 +35,31 @@ export function ConversationDetailPage({ conversationId }: { conversationId: str
 
   return (
     <Stack>
-      <Group justify="space-between">
+      <MotionSection>
+        <Group justify="space-between">
         <div>
           <Title order={2}>Conversation</Title>
           <Text c="dimmed">{data.conversation.sessionId}</Text>
         </div>
         <Text size="sm" c="dimmed">{data.conversation.projectName}</Text>
-      </Group>
+        </Group>
+      </MotionSection>
 
-      <Card withBorder>
-        <Text size="sm" c="dimmed">{data.file_path}</Text>
-      </Card>
+      <MotionCard>
+        <Card withBorder>
+          <Text size="sm" c="dimmed">{data.file_path}</Text>
+        </Card>
+      </MotionCard>
 
-      <Card withBorder>
+      <MotionCard>
+        <Card withBorder>
         <ScrollArea h={620}>
           <Stack>
             {data.conversation.messages.map((message) => {
               const summary = summarizeMessage(message)
               return (
-                <Card key={message.uuid} withBorder>
+                <MotionListItem key={message.uuid}>
+                  <Card withBorder>
                   <Group justify="space-between" mb="xs">
                     <Group gap="xs">
                       <Badge variant="outline">{message.type}</Badge>
@@ -64,12 +71,14 @@ export function ConversationDetailPage({ conversationId }: { conversationId: str
                     <Text size="sm" mb="xs" lineClamp={3}>{summary.preview}</Text>
                   )}
                   <Code block>{JSON.stringify(message, null, 2)}</Code>
-                </Card>
+                  </Card>
+                </MotionListItem>
               )
             })}
           </Stack>
         </ScrollArea>
-      </Card>
+        </Card>
+      </MotionCard>
     </Stack>
   )
 }

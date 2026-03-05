@@ -4,6 +4,7 @@ const MOTION_STORAGE_KEY = 'cc-viz-motion-enabled'
 
 interface MotionContextValue {
   motionEnabled: boolean
+  shouldAnimate: boolean
   setMotionEnabled: (enabled: boolean) => void
 }
 
@@ -12,7 +13,7 @@ const MotionContext = createContext<MotionContextValue | null>(null)
 function readInitialMotionValue(): boolean {
   if (typeof window === 'undefined') return true
   const value = window.localStorage.getItem(MOTION_STORAGE_KEY)
-  if (value === null) return true
+  if (value === null || value === undefined) return true
   return value === 'true'
 }
 
@@ -29,6 +30,7 @@ export function MotionProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(() => ({
     motionEnabled,
+    shouldAnimate: motionEnabled,
     setMotionEnabled,
   }), [motionEnabled, setMotionEnabled])
 

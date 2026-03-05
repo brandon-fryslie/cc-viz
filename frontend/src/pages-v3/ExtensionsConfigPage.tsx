@@ -20,6 +20,7 @@ import { useLocation, useNavigate } from '@tanstack/react-router'
 import { FreshnessBadges } from '@/components/live/FreshnessBadges'
 import { reindexExtensionsV3, useV3ExtensionDetail, useV3ExtensionsConfig } from '@/lib/api-v3'
 import { useListFreshness } from '@/lib/live/useListFreshness'
+import { MotionCard, MotionSection } from '@/lib/motion/primitives'
 
 interface ExtensionsConfigPageProps {
   type?: string
@@ -116,18 +117,21 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
 
   return (
     <Stack>
-      <Group justify="space-between">
+      <MotionSection>
+        <Group justify="space-between">
         <div>
           <Title order={2}>Extensions & Config</Title>
           <Text c="dimmed">Unified view for extensions, plugins, and Claude configuration.</Text>
           <FreshnessBadges freshness={pageFreshness} label="Page freshness" />
         </div>
         <Button loading={reindexing} onClick={onReindex}>Reindex</Button>
-      </Group>
+        </Group>
+      </MotionSection>
 
       <Grid>
         <Grid.Col span={{ base: 12, lg: 3 }}>
-          <Card withBorder>
+          <MotionCard>
+            <Card withBorder>
             <Stack>
               <Text fw={600}>Filters</Text>
               <TextInput
@@ -173,11 +177,13 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
                 data={[{ value: '', label: 'All' }, ...pluginOptions]}
               />
             </Stack>
-          </Card>
+            </Card>
+          </MotionCard>
         </Grid.Col>
 
         <Grid.Col span={{ base: 12, lg: 9 }}>
-          <Card withBorder>
+          <MotionCard>
+            <Card withBorder>
             {isLoading ? (
               <Text c="dimmed">Loading extensions...</Text>
             ) : (
@@ -220,11 +226,13 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
                 </Table>
               </ScrollArea>
             )}
-          </Card>
+            </Card>
+          </MotionCard>
         </Grid.Col>
       </Grid>
 
-      <Card withBorder>
+      <MotionSection delay={0.1}>
+        <Card withBorder>
         <Tabs value={configTab} onChange={(value) => setConfigTab(value || 'claude_md')}>
           <Tabs.List>
             <Tabs.Tab value="claude_md">CLAUDE.md</Tabs.Tab>
@@ -250,7 +258,8 @@ export function ExtensionsConfigPage({ type, id }: ExtensionsConfigPageProps) {
             <Code block>{JSON.stringify(data?.plugins || [], null, 2)}</Code>
           </Tabs.Panel>
         </Tabs>
-      </Card>
+        </Card>
+      </MotionSection>
 
       <Drawer
         opened={Boolean(selected)}
