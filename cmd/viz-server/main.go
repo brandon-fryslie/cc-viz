@@ -15,6 +15,7 @@ import (
 
 	"github.com/brandon-fryslie/cc-viz/internal/config"
 	"github.com/brandon-fryslie/cc-viz/internal/handler"
+	"github.com/brandon-fryslie/cc-viz/internal/metrics"
 	"github.com/brandon-fryslie/cc-viz/internal/middleware"
 	"github.com/brandon-fryslie/cc-viz/internal/service"
 )
@@ -61,6 +62,7 @@ func main() {
 	// Create data handler (full dependencies)
 	h := handler.NewDataHandler(storageService, logger, cfg)
 	h.SetIndexer(indexer)
+	metricsRegistry, httpMetrics := metrics.NewRegistry(storageService, storageService.DB())
 
 	r := mux.NewRouter()
 
@@ -71,9 +73,11 @@ func main() {
 	)
 
 	r.Use(middleware.Logging)
+	r.Use(httpMetrics.Middleware)
 
 	// Health check
 	r.HandleFunc("/health", h.Health).Methods("GET")
+	r.Handle("/metrics", metrics.Handler(metricsRegistry)).Methods("GET")
 
 	// V1 API - Stats endpoints
 	r.HandleFunc("/api/stats", h.GetStats).Methods("GET")
@@ -209,6 +213,7 @@ func main() {
 		logger.Printf("   - GET  /api/conversations (Conversations)")
 		logger.Printf("   - GET  /api/v2/* (V2 API)")
 		logger.Printf("   - GET  /api/v2/claude/subagent-graph/* (Subagent Graph)")
+		logger.Printf("   - GET  /metrics (Prometheus)")
 		logger.Printf("   - GET  /health")
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
