@@ -12,6 +12,10 @@ install:
 build:
     CGO_ENABLED=1 go build -tags fts5 -o bin/viz-server ./cmd/viz-server
 
+# Build the standalone VictoriaMetrics exporter
+build-claude-vm-exporter:
+    cd exporters/claude-vm-exporter && CGO_ENABLED=1 go build -o ../../bin/claude-vm-exporter ./cmd/claude-vm-exporter
+
 # Build with embedded frontend
 build-embedded: install
     pnpm --filter ./frontend run build
@@ -43,6 +47,11 @@ dev:
 # Run tests
 test:
     CGO_ENABLED=1 go test -tags fts5 ./...
+    cd exporters/claude-vm-exporter && CGO_ENABLED=1 go test ./...
+
+# Run only standalone exporter tests
+test-claude-vm-exporter:
+    cd exporters/claude-vm-exporter && CGO_ENABLED=1 go test ./...
 
 # Run linter
 lint:

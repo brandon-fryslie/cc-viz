@@ -1,0 +1,25 @@
+source:
+  projects_dir: "~/.claude/projects"
+
+state:
+  db_path: "~/.local/state/claude-vm-exporter/state.db"
+
+victoriametrics:
+  write_url: "http://192.168.7.208:8428/write"
+  import_path: "/api/v1/import/prometheus"
+  timeout: "30s"
+  auth:
+    bearer_token: ""
+    basic_auth_user: ""
+    basic_auth_password: ""
+
+sync:
+  poll_interval: "1m"
+  finalization_delay: "65m"
+
+labels:
+  static:
+    instance: "claude-desktop"
+
+health:
+  listen_addr: ""
